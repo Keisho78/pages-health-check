@@ -1,1 +1,3316 @@
-<h1>hello pages test</h1>
+<!DOCTYPE html>
+<!--
+  ============================================================================
+  三条工務店 ビジネス版MBTI適性診断（単一ファイル版）
+  ============================================================================
+  ■ 目的
+    採用選考の場で応募者に受けてもらう参考ツール。合否判定には使わない。
+    回答はブラウザ内のみで処理し、外部送信は一切行わない。
+    （リロード事故対策として回答中のみ sessionStorage に一時保存し、
+      結果表示の時点で自動削除する。キーは STORAGE_KEY を参照）
+
+  ■ 編集ガイド（カスタマイズしたい場合はここを編集）
+    1. スコア合成比率・下限:
+         ANSWER_RATIO  … 回答スコアの比率（残りがタイプ補正）。既定 0.75
+         SCORE_FLOOR   … スコア下限の底上げ値。既定 40（40〜100%に圧縮）
+    2. 質問の編集（全76問 = 共通60問 + タイプ別16問）:
+         COMMON_QUESTIONS  … 全タイプ共通の基礎質問60問（10カテゴリ×6問）
+         LETTER_QUESTIONS  … E/I/S/N/T/F/J/P 各文字ごとの出し分け質問（各4問）
+         各質問は { text, cat, rev } 形式。
+           cat: "stress"(ストレス耐性) / "nego"(対人折衝) / "acc"(正確性) /
+                "team"(チームワーク・誠実性) / "adapt"(変化対応・段取り) /
+                "drive"(目標達成意欲) / "create"(創造性・デザイン感覚) /
+                "empathy"(傾聴・共感力) / "plan"(企画・分析・発信) /
+                "learn"(学習意欲・成長志向)
+           rev: true にすると逆転項目（回答値を 6-値 で反転）
+    3. 部署別のカテゴリ重み: DEPT_WEIGHTS
+    4. カルチャーフィットのカテゴリ重み: CULTURE_WEIGHTS
+    5. タイプごとの部署補正(0-100): TYPE_BONUS
+    6. タイプ解説文: TYPE_PROFILES
+    7. カテゴリ別の詳細コメント(強み/安定/伸びしろの3段階): CATEGORY_COMMENTS
+    8. 回答スタイル分析の判定しきい値・文言: ANSWER_STYLE_METRICS
+    9. 結果キャラクター(名前・コピー・ドット絵・特性プロファイル): CHARACTERS
+       ※MBTI固定ではなく、回答のカテゴリスコアとtraitsのマッチ度で選定(pickCharacter)
+       ※ドット絵は12x12のテキストグリッド。「.」=透明、文字=paletteの色
+
+  ■ 動作確認手順
+    ・このファイルをブラウザ（Chrome/Safari/Edge）でダブルクリックで開くだけ。
+    ・GitHub Pages: リポジトリにこのファイルを index.html として置き、
+      Settings > Pages で公開ブランチを指定すれば URL で配布できる。
+  ============================================================================
+-->
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>三条工務店 ビジネス適性診断</title>
+
+<!-- CDN: React 18 / Babel(ブラウザ内JSX変換) / Chart.js -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<!-- Webフォント: 見出し=Zen Kaku Gothic New / 本文=Noto Sans JP / 英字数字=Raleway -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500&family=Noto+Sans+JP:wght@300;400;500;700&family=Shippori+Mincho:wght@400;500;600&display=swap" rel="stylesheet" />
+
+<style>
+  /* ===== デザイントークン: 建築設計事務所風の上質ミニマル =====
+     フルブリードのセクション構成（クリーム／ベージュ／ダークブラウン）。
+     しっぽり明朝の細い見出し＋広い字間、ヘアライン罫線、余白で語る。
+     見出し=Shippori Mincho / 英字・数字=Jost / 本文=Noto Sans JP */
+  :root {
+    --ink: #3a342e;          /* 基本の墨色 */
+    --dark: #453c34;         /* ダークブラウン（ヒーロー・フッター・選択中） */
+    --brown: #8a6a48;        /* 茶のアクセント */
+    --brown-soft: #b3a189;
+    --bg: #fcf5eb;           /* クリーム地 */
+    --bg-alt: #f7ede0;       /* ベージュ面 */
+    --paper: #ffffff;
+    --text: #433d38;
+    --text-sub: #978b7c;
+    --line: #e5dccd;         /* ヘアライン */
+    --cream-text: #f6efe4;   /* ダーク面上の文字色 */
+    --radius: 4px;
+    --font-min: "Shippori Mincho", "Noto Serif JP", serif;
+    --font-en: "Jost", "Helvetica Neue", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: "Noto Sans JP", system-ui, -apple-system, "Hiragino Kaku Gothic ProN",
+                 "Yu Gothic UI", Meiryo, sans-serif;
+    font-weight: 400;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 2;
+    font-size: 15.5px;
+  }
+  #root { min-height: 100vh; display: flex; flex-direction: column; }
+  main { flex: 1; }
+  button:focus-visible { outline: 2px solid var(--brown); outline-offset: 3px; }
+  .nowrap { white-space: nowrap; }
+
+  /* ===== 固定トップバー: 左ロゴ＋右に現在ステップ ===== */
+  .topbar {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 30px 5vw;
+    z-index: 20;
+    pointer-events: none;
+  }
+  .topbar-logo .en {
+    display: block;
+    font-family: var(--font-en);
+    font-weight: 400;
+    font-size: 9px;
+    letter-spacing: 0.42em;
+    color: var(--brown);
+    margin-bottom: 2px;
+  }
+  .topbar-logo strong {
+    display: block;
+    font-family: var(--font-min);
+    font-weight: 500;
+    font-size: 21px;
+    letter-spacing: 0.2em;
+    color: var(--ink);
+    line-height: 1.4;
+  }
+  .topbar-step {
+    font-family: var(--font-en);
+    font-weight: 300;
+    font-size: 11px;
+    letter-spacing: 0.3em;
+    color: var(--text-sub);
+  }
+  /* ダークヒーローの上では文字色を反転 */
+  .topbar.on-dark .topbar-logo .en { color: var(--brown-soft); }
+  .topbar.on-dark .topbar-logo strong { color: var(--cream-text); }
+  .topbar.on-dark .topbar-step { color: var(--brown-soft); }
+
+  /* ===== フルブリードのセクション共通 ===== */
+  .sec { padding: 110px 0; }
+  .inner { max-width: 1020px; margin: 0 auto; padding: 0 6vw; }
+  .sec-label {
+    display: block;
+    font-family: var(--font-en);
+    font-weight: 300;
+    font-size: 12px;
+    letter-spacing: 0.36em;
+    text-transform: uppercase;
+    color: var(--brown-soft);
+    margin-bottom: 10px;
+  }
+  .sec-heading {
+    font-family: var(--font-min);
+    font-weight: 500;
+    font-size: 30px;
+    letter-spacing: 0.16em;
+    color: var(--ink);
+    line-height: 1.7;
+    margin-bottom: 28px;
+  }
+  @media (max-width: 640px) {
+    .sec { padding: 68px 0; }
+    .sec-heading { font-size: 23px; }
+  }
+
+  /* ===== ヒーロー: フルスクリーンのダークタイポグラフィ ===== */
+  .hero-full {
+    position: relative;
+    min-height: 620px;
+    height: 88vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 90px 20px 80px;
+    background:
+      radial-gradient(120% 90% at 50% -10%, rgba(255, 244, 226, 0.07), transparent 55%),
+      linear-gradient(160deg, #4a4138 0%, #453c34 55%, #3d352e 100%);
+  }
+  .hero-eyebrow {
+    font-family: var(--font-en);
+    font-weight: 300;
+    font-size: 11px;
+    letter-spacing: 0.44em; text-indent: 0.44em;
+    color: var(--brown-soft);
+    margin-bottom: 34px;
+  }
+  .hero-full h1 {
+    font-family: var(--font-min);
+    font-weight: 400;
+    font-size: clamp(30px, 4.6vw, 54px);
+    letter-spacing: 0.24em;
+    line-height: 2;
+    color: var(--cream-text);
+    margin-bottom: 34px;
+  }
+  .hero-lead {
+    display: inline-block;
+    font-family: var(--font-min);
+    font-weight: 500;
+    font-size: 14px;
+    letter-spacing: 0.44em; text-indent: 0.44em;
+    color: var(--brown-soft);
+    padding-top: 20px;
+    border-top: 1px solid rgba(203, 187, 164, 0.4);
+  }
+  .scroll-cue {
+    position: absolute;
+    bottom: 0; left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  .scroll-cue span {
+    font-family: var(--font-en);
+    font-weight: 300;
+    font-size: 9px;
+    letter-spacing: 0.34em; text-indent: 0.34em;
+    color: var(--brown-soft);
+  }
+  .scroll-cue::after {
+    content: "";
+    width: 1px; height: 52px;
+    background: linear-gradient(rgba(203, 187, 164, 0.9), rgba(203, 187, 164, 0.1));
+    animation: cueDrop 2.2s ease-in-out infinite;
+    transform-origin: top;
+  }
+  @keyframes cueDrop {
+    0%   { transform: scaleY(0); }
+    45%  { transform: scaleY(1); }
+    100% { transform: scaleY(1); opacity: 0; }
+  }
+
+  /* ===== About: 見出し＋本文の2カラム ===== */
+  .sec-about { background: var(--bg); }
+  .about-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.45fr;
+    gap: 64px;
+    align-items: start;
+  }
+  @media (max-width: 820px) { .about-grid { grid-template-columns: 1fr; gap: 28px; } }
+  .about-body p { font-size: 15px; line-height: 2.3; color: var(--text); }
+  .about-facts { list-style: none; margin-top: 34px; }
+  .about-facts li {
+    display: flex;
+    align-items: baseline;
+    gap: 22px;
+    padding: 15px 2px;
+    border-bottom: 1px solid var(--line);
+    font-size: 13.5px;
+    letter-spacing: 0.04em;
+  }
+  .about-facts li:first-child { border-top: 1px solid var(--line); }
+  .about-facts .en {
+    flex: 0 0 64px;
+    font-family: var(--font-en);
+    font-weight: 400;
+    font-size: 10.5px;
+    letter-spacing: 0.24em;
+    color: var(--brown);
+  }
+
+  /* ===== Flow: 番号つき4ステップ ===== */
+  .sec-flow { background: var(--bg-alt); }
+  .flow-grid {
+    list-style: none;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 40px;
+    margin-top: 14px;
+  }
+  @media (max-width: 900px) { .flow-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 520px) { .flow-grid { grid-template-columns: 1fr; gap: 26px; } }
+  .flow-grid li { border-top: 1px solid var(--ink); padding-top: 18px; }
+  .flow-grid .num {
+    display: block;
+    font-family: var(--font-en);
+    font-weight: 300;
+    font-size: 26px;
+    letter-spacing: 0.14em;
+    color: var(--brown-soft);
+    margin-bottom: 10px;
+  }
+  .flow-grid h3 {
+    font-family: var(--font-min);
+    font-weight: 500;
+    font-size: 16.5px;
+    letter-spacing: 0.14em;
+    color: var(--ink);
+    margin-bottom: 8px;
+  }
+  .flow-grid p { font-size: 12.5px; line-height: 2; color: var(--text-sub); }
+
+  /* ===== Characters: 全16キャラクターの一覧（円形メダリオンのグリッド） ===== */
+  .sec-chars { background: var(--bg); }
+  .chars-note { font-size: 13.5px; color: var(--text-sub); margin: -6px 0 44px; }
+  .chars-grid {
+    list-style: none;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 40px 18px;
+  }
+  @media (max-width: 720px) { .chars-grid { grid-template-columns: repeat(2, 1fr); gap: 30px 12px; } }
+  .chars-grid li { text-align: center; }
+  .chars-medal {
+    width: 94px; height: 94px;
+    margin: 0 auto 14px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%;
+    background: radial-gradient(circle at 38% 30%, #fbf3e6, #f2e5d2);
+    border: 1px solid #ddcdb2;
+    transition: transform 0.3s ease;
+  }
+  .chars-grid li:hover .chars-medal { transform: translateY(-4px); }
+  .chars-medal svg { filter: saturate(0.82); }
+  .chars-name { line-height: 1.6; }
+  .chars-name .role {
+    display: block;
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    color: var(--text-sub);
+  }
+  .chars-name strong {
+    display: block;
+    font-family: var(--font-min);
+    font-weight: 500;
+    font-size: 13.5px;
+    letter-spacing: 0.06em;
+    color: var(--ink);
+  }
+
+  /* ===== Notice: ダークブラウンの帯 ===== */
+  .sec-notice { background: var(--dark); }
+  .sec-notice .sec-label { color: var(--brown-soft); }
+  .notice-inner { max-width: 760px; text-align: center; }
+  .notice-inner p {
+    font-family: var(--font-min);
+    font-weight: 400;
+    font-size: 15px;
+    letter-spacing: 0.1em;
+    line-height: 2.6;
+    color: var(--cream-text);
+  }
+
+  /* ===== CTA: 円形矢印ボタン ===== */
+  .sec-cta { background: var(--bg); text-align: center; }
+  .cta-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 30px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .cta-circle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 92px; height: 92px;
+    border: 1px solid var(--ink);
+    border-radius: 50%;
+    font-family: var(--font-en);
+    font-weight: 300;
+    font-size: 22px;
+    color: var(--ink);
+    transition: background 0.35s ease, color 0.35s ease, transform 0.35s ease;
+  }
+  .cta-text {
+    font-family: var(--font-min);
+    font-weight: 500;
+    font-size: 19px;
+    letter-spacing: 0.3em;
+    color: var(--ink);
+  }
+  .cta-link:hover .cta-circle { background: var(--dark); border-color: var(--dark); color: var(--cream-text); transform: translateX(6px); }
+  .resume-link {
+    display: block;
+    margin: 34px auto 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12.5px;
+    letter-spacing: 0.1em;
+    color: var(--text-sub);
+    text-decoration: underline;
+    text-underline-offset: 5px;
+  }
+  .resume-link:hover { color: var(--brown); }
+
+  /* ===== 内部画面の共通コンテナ（トップバーの下に余白） ===== */
+  .container {
+    width: 100%;
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 150px 20px 90px;
+  }
+  @media (max-width: 640px) { .container { padding-top: 120px; } }
+
+  /* ===== カード: 罫線のない白いパネル ===== */
+  .card {
+    background: var(--paper);
+    border: none;
+    border-radius: var(--radius);
+    padding: 48px 44px;
+    margin-bottom: 28px;
+  }
+  @media (max-width: 480px) { .card { padding: 30px 20px; } }
+
+  /* 画面切替アニメーション（静かに立ち上がる） */
+  .screen > * { animation: fadeUp 0.7s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .screen > *:nth-child(2) { animation-delay: 0.1s; }
+  .screen > *:nth-child(3) { animation-delay: 0.2s; }
+  .screen > *:nth-child(4) { animation-delay: 0.3s; }
+  .screen > *:nth-child(5) { animation-delay: 0.4s; }
+  .screen > *:nth-child(6) { animation-delay: 0.5s; }
+  .screen > *:nth-child(7) { animation-delay: 0.6s; }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(18px); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  h1 {
+    font-family: var(--font-min);
+    font-size: 30px; font-weight: 500;
+    letter-spacing: 0.16em;
+    color: var(--ink); line-height: 1.9;
+    margin-bottom: 12px;
+  }
+  h2 {
+    font-family: var(--font-min);
+    font-size: 21px; font-weight: 500;
+    letter-spacing: 0.14em;
+    color: var(--ink);
+    margin-bottom: 14px;
+  }
+  h3 {
+    font-family: var(--font-min);
+    font-size: 16px; font-weight: 500;
+    letter-spacing: 0.1em;
+    color: var(--ink);
+    margin-bottom: 8px;
+  }
+  p.sub { color: var(--text-sub); font-size: 14px; }
+
+  /* ===== ボタン: 細枠のピル型（ホバーで反転） ===== */
+  .btn {
+    display: inline-block;
+    font-family: inherit;
+    font-size: 13.5px;
+    font-weight: 500;
+    letter-spacing: 0.28em; text-indent: 0.28em;
+    padding: 16px 30px;
+    min-height: 54px;
+    border: 1px solid var(--dark);
+    border-radius: 999px;
+    cursor: pointer;
+    background: transparent;
+    color: var(--ink);
+    transition: background 0.3s ease, color 0.3s ease, opacity 0.2s, border-color 0.3s;
+  }
+  .btn:hover:not(:disabled) { background: var(--dark); color: var(--cream-text); }
+  .btn-primary { background: var(--dark); color: var(--cream-text); }
+  .btn-primary:hover:not(:disabled) { background: #5a4d41; border-color: #5a4d41; }
+  .btn-primary:disabled { opacity: 0.3; cursor: not-allowed; }
+  .btn-ghost { background: transparent; }
+  .btn-wide { width: 100%; }
+
+  /* ===== セクション見出し: 小さな英字ラベル＋明朝の日本語 ===== */
+  .section-title {
+    display: block;
+    margin: 4px 2px 24px;
+  }
+  .section-title .en {
+    display: block;
+    font-family: var(--font-en);
+    font-weight: 300;
+    font-size: 12px;
+    letter-spacing: 0.34em;
+    color: var(--brown-soft);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .section-title .ja {
+    display: block;
+    font-family: var(--font-min);
+    font-weight: 500;
+    font-size: 26px;
+    letter-spacing: 0.14em;
+    color: var(--brown);
+    line-height: 1.6;
+  }
+  @media (max-width: 480px) { .section-title .ja { font-size: 21px; } }
+  .result-sec { margin-bottom: 64px; }
+  .result-sec .card { margin-bottom: 0; }
+
+  /* ===== タイプ選択画面 ===== */
+  .mode-tabs {
+    display: flex; gap: 12px;
+    margin-bottom: 28px;
+  }
+  .mode-tab {
+    flex: 1;
+    font-family: inherit;
+    font-size: 12.5px; font-weight: 500;
+    letter-spacing: 0.2em; text-indent: 0.2em;
+    padding: 13px 6px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-sub);
+    cursor: pointer;
+    transition: all 0.3s;
+  }
+  .mode-tab:hover { border-color: var(--brown-soft); color: var(--ink); }
+  .mode-tab.active { background: var(--dark); border-color: var(--dark); color: var(--cream-text); }
+
+  .axis-block { margin-bottom: 22px; }
+  .axis-label {
+    font-family: var(--font-en);
+    font-size: 11px; font-weight: 400;
+    letter-spacing: 0.24em;
+    color: var(--brown-soft);
+    margin-bottom: 8px;
+  }
+  .axis-pair { display: flex; gap: 10px; }
+  .axis-option {
+    flex: 1;
+    font-family: inherit;
+    text-align: left;
+    padding: 14px 16px;
+    border-radius: var(--radius);
+    border: 1px solid var(--line);
+    background: transparent;
+    cursor: pointer;
+    transition: all 0.25s;
+  }
+  .axis-option:hover { border-color: var(--brown-soft); background: var(--bg-alt); }
+  .axis-option.selected { border-color: var(--brown); background: var(--bg-alt); }
+  .axis-option .letter { font-family: var(--font-en); font-size: 17px; font-weight: 500; color: var(--brown); }
+  .axis-option .desc { font-size: 12px; color: var(--text-sub); line-height: 1.6; }
+
+  .type-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+  }
+  @media (max-width: 560px) { .type-grid { grid-template-columns: repeat(2, 1fr); } }
+  .type-cell {
+    font-family: inherit;
+    padding: 14px 8px 12px;
+    border-radius: var(--radius);
+    border: 1px solid var(--line);
+    background: transparent;
+    cursor: pointer;
+    text-align: center;
+    transition: all 0.25s;
+    min-height: 76px;
+  }
+  .type-cell:hover { border-color: var(--brown-soft); background: var(--bg-alt); }
+  .type-cell.selected { border-color: var(--brown); background: var(--bg-alt); }
+  .type-cell .code { font-family: var(--font-en); font-size: 15px; font-weight: 500; color: var(--brown); letter-spacing: 0.14em; }
+  .type-cell .name { font-size: 11px; color: var(--text-sub); line-height: 1.5; display: block; margin-top: 3px; }
+
+  .selected-type-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 14px;
+    background: var(--dark);
+    color: var(--cream-text);
+    border-radius: var(--radius);
+    padding: 18px 24px;
+    margin-top: 28px;
+  }
+  .selected-type-bar .code { font-family: var(--font-en); font-size: 21px; font-weight: 400; letter-spacing: 0.22em; }
+  .selected-type-bar .name { font-size: 12px; letter-spacing: 0.1em; opacity: 0.75; }
+  .selected-type-bar .btn { border-color: rgba(246, 239, 228, 0.6); color: var(--cream-text); background: transparent; }
+  .selected-type-bar .btn:hover:not(:disabled) { background: var(--cream-text); color: var(--dark); }
+
+  /* ===== 応募者プロフィール入力（タイプ選択画面・任意） ===== */
+  .profile-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 22px;
+    margin: 4px 0 26px;
+  }
+  @media (max-width: 560px) { .profile-fields { grid-template-columns: 1fr; gap: 14px; } }
+  .profile-fields label { display: block; }
+  .pf-label {
+    display: block;
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    color: var(--brown);
+    margin-bottom: 2px;
+  }
+  .profile-fields input {
+    width: 100%;
+    border: none;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+    background: transparent;
+    padding: 7px 2px;
+    font-family: inherit;
+    font-size: 15px;
+    color: var(--text);
+  }
+  .profile-fields input::placeholder { color: #cfc4b0; }
+  .profile-fields input:focus { outline: none; border-bottom-color: var(--brown); }
+
+  /* 結果画面の回答者表示 */
+  .result-person {
+    text-align: right;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    color: var(--text-sub);
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 12px;
+    margin-bottom: 18px;
+  }
+
+  /* ===== 質問画面 ===== */
+  .progress-wrap { margin-bottom: 30px; }
+  .progress-meta {
+    display: flex; justify-content: space-between;
+    font-family: var(--font-en);
+    font-weight: 400;
+    font-size: 11.5px;
+    letter-spacing: 0.2em;
+    color: var(--text-sub);
+    margin-bottom: 10px;
+  }
+  .progress-track {
+    height: 2px;
+    background: var(--line);
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: var(--brown);
+    transition: width 0.4s ease;
+  }
+
+  /* 設問の切替アニメーション（key=設問番号で再発火） */
+  .q-anim { animation: qIn 0.4s ease both; }
+  @keyframes qIn {
+    from { opacity: 0; transform: translateX(10px); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  .q-category {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.22em;
+    color: var(--brown);
+    border: 1px solid var(--brown-soft);
+    padding: 3px 16px;
+    border-radius: 999px;
+    margin-bottom: 16px;
+  }
+  .q-text { font-size: 17.5px; font-weight: 500; line-height: 2; margin-bottom: 28px; min-height: 3.8em; }
+  @media (max-width: 480px) { .q-text { font-size: 15.5px; } }
+
+  .likert { display: flex; flex-direction: column; gap: 8px; }
+  .likert-option {
+    font-family: inherit;
+    display: flex; align-items: center; gap: 16px;
+    width: 100%;
+    padding: 13px 20px;
+    min-height: 54px;
+    border-radius: var(--radius);
+    border: 1px solid var(--line);
+    background: transparent;
+    font-size: 14px;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    transition: all 0.25s;
+    text-align: left;
+  }
+  .likert-option:hover { border-color: var(--brown-soft); background: var(--bg-alt); }
+  .likert-option.selected {
+    background: var(--dark);
+    border-color: var(--dark);
+    color: var(--cream-text);
+    font-weight: 500;
+  }
+  .likert-option .num {
+    flex-shrink: 0;
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    border: 1px solid var(--brown-soft);
+    display: flex; align-items: center; justify-content: center;
+    background: transparent; color: var(--brown);
+    font-family: var(--font-en);
+    font-weight: 400; font-size: 12.5px;
+    transition: all 0.25s;
+  }
+  .likert-option.selected .num { border-color: rgba(246, 239, 228, 0.6); color: var(--cream-text); }
+
+  .kbd-hint { margin-top: 18px; font-size: 11.5px; letter-spacing: 0.06em; color: var(--text-sub); text-align: center; }
+  .kbd-hint kbd {
+    display: inline-block;
+    min-width: 20px;
+    padding: 1px 6px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--paper);
+    font-family: var(--font-en);
+    font-size: 10.5px;
+    text-align: center;
+  }
+  @media (hover: none) { .kbd-hint { display: none; } } /* タッチ端末では非表示 */
+
+  .quiz-nav { display: flex; gap: 12px; margin-top: 30px; }
+  .quiz-nav .btn { flex: 1; }
+  .unanswered-note {
+    margin-top: 18px;
+    background: var(--bg-alt);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.9;
+  }
+
+  /* ===== 結果画面: キャラクター表示（円形メダリオン） ===== */
+  .char-hero {
+    text-align: center;
+    padding: 10px 0 26px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 26px;
+  }
+  .char-frame {
+    position: relative;
+    display: inline-flex;
+    padding: 34px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 38% 30%, #fbf3e6, #f2e5d2);
+    border: 1px solid #ddcdb2;
+    box-shadow: 0 0 0 7px var(--paper), 0 0 0 8px var(--line);
+    animation: charPop 0.8s cubic-bezier(0.25, 1, 0.4, 1) both;
+    margin-top: 8px;
+  }
+  .char-frame svg { filter: saturate(0.82); }
+  @keyframes charPop {
+    from { opacity: 0; transform: scale(0.85); }
+    to   { opacity: 1; transform: scale(1); }
+  }
+  .char-lead {
+    display: block;
+    font-size: 11.5px;
+    letter-spacing: 0.34em; text-indent: 0.34em;
+    color: var(--text-sub);
+    margin-top: 26px;
+  }
+  .char-name {
+    font-family: var(--font-min);
+    font-size: 27px; font-weight: 500;
+    letter-spacing: 0.1em;
+    color: var(--ink);
+    line-height: 1.7; margin: 8px 0 12px;
+  }
+  @media (max-width: 480px) { .char-name { font-size: 21px; } }
+  .char-type-badge {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    color: var(--brown);
+    border: 1px solid var(--brown-soft);
+    padding: 4px 18px;
+    border-radius: 999px;
+    margin-bottom: 14px;
+  }
+  .char-copy { font-size: 13.5px; color: var(--text-sub); line-height: 2; }
+  .char-basis {
+    display: inline-block;
+    margin-top: 14px;
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+    color: var(--text-sub);
+    background: var(--bg-alt);
+    padding: 6px 18px;
+    border-radius: 999px;
+  }
+
+  /* ===== 結果画面: 円形フィットゲージ（細いリング） ===== */
+  .fit-gauge-wrap { text-align: center; padding: 8px 0 4px; }
+  .fit-gauge-wrap .sub {
+    font-size: 12.5px;
+    font-weight: 500;
+    letter-spacing: 0.24em; text-indent: 0.24em;
+  }
+  .fit-ring-wrap { position: relative; width: 200px; margin: 20px auto 12px; }
+  .fit-ring { display: block; width: 100%; transform: rotate(-90deg); }
+  .ring-bg { fill: none; stroke: #ece1cf; stroke-width: 5; }
+  .ring-fg { fill: none; stroke-width: 5; stroke-linecap: butt; }
+  .fit-ring-center {
+    position: absolute; inset: 0;
+    display: flex; align-items: baseline; justify-content: center;
+    padding-top: 74px;
+  }
+  .fit-ring-center .num {
+    font-family: var(--font-min);
+    font-size: 52px; font-weight: 400;
+    color: var(--ink); line-height: 1;
+  }
+  .fit-ring-center .unit { font-family: var(--font-en); font-weight: 300; font-size: 16px; color: var(--text-sub); margin-left: 6px; }
+
+  .chart-box { position: relative; width: 100%; max-width: 420px; margin: 0 auto; }
+
+  /* 部署別: 枠のないリスト＋ヘアライン区切り */
+  .dept-row {
+    padding: 20px 6px;
+    border: none;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+    background: transparent;
+    margin-bottom: 0;
+  }
+  .dept-row:last-child { border-bottom: none; }
+  .dept-row.best {
+    background: var(--bg-alt);
+    border-radius: var(--radius);
+    border-bottom: none;
+    padding: 20px 18px;
+    margin: 6px 0;
+  }
+  .dept-row .dept-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; margin-bottom: 4px;
+  }
+  .dept-row .dept-name { font-weight: 500; letter-spacing: 0.04em; color: var(--ink); font-size: 14.5px; }
+  .dept-row .dept-score { font-family: var(--font-en); font-weight: 400; font-size: 21px; letter-spacing: 0.04em; color: var(--brown); flex-shrink: 0; }
+  .dept-bar {
+    height: 2px;
+    background: var(--line);
+    border: none;
+    border-radius: 0;
+    overflow: hidden;
+    margin: 8px 0 10px;
+  }
+  .dept-bar-fill { height: 100%; background: var(--brown); border-radius: 0; }
+  .dept-row .dept-comment { font-size: 12.5px; color: var(--text-sub); line-height: 1.9; }
+  .best-badge {
+    display: inline-block;
+    font-family: var(--font-en);
+    font-weight: 400;
+    font-size: 10px;
+    letter-spacing: 0.26em; text-indent: 0.1em;
+    color: var(--brown);
+    border: 1px solid var(--brown-soft);
+    padding: 2px 10px; border-radius: 999px;
+    margin-left: 10px; vertical-align: 2px;
+  }
+  .profile-section { margin-bottom: 20px; }
+  .profile-section h3 { display: flex; align-items: center; gap: 8px; }
+  .profile-section ul { margin: 6px 0 0 22px; font-size: 14px; }
+  .profile-section li { margin-bottom: 4px; }
+
+  /* ===== 特性詳細（表・バッジ・強みチップ） ===== */
+  .strength-chips { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0 8px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 500;
+    letter-spacing: 0.06em;
+    padding: 6px 16px; border-radius: 999px;
+  }
+  .chip-strong { background: #f2e3d2; color: #7c5a38; }
+  .chip-grow   { background: #e9ecdd; color: #5c6b47; }
+
+  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .detail-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    min-width: 480px;
+  }
+  .detail-table th {
+    text-align: left;
+    font-family: var(--font-en);
+    font-weight: 400;
+    font-size: 10.5px;
+    letter-spacing: 0.2em;
+    color: var(--text-sub);
+    border-bottom: 1px solid var(--ink);
+    padding: 10px;
+    white-space: nowrap;
+  }
+  .detail-table td {
+    padding: 13px 10px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    line-height: 1.85;
+  }
+  .detail-table td.score-cell { font-family: var(--font-en); font-weight: 400; font-size: 15px; color: var(--ink); white-space: nowrap; }
+  .band-badge {
+    display: inline-block;
+    font-size: 11.5px; font-weight: 500;
+    letter-spacing: 0.08em;
+    padding: 2px 12px; border-radius: 999px;
+    white-space: nowrap;
+  }
+  .band-strong { background: #f2e3d2; color: #7c5a38; }
+  .band-stable { background: #ece9e0; color: #6b675c; }
+  .band-grow   { background: #e9ecdd; color: #5c6b47; }
+
+  /* スマホでは表を横スクロールさせず、1行＝1カードの縦積みに切り替える */
+  @media (max-width: 560px) {
+    .detail-table { min-width: 0; }
+    .detail-table thead { display: none; }
+    .detail-table tbody tr {
+      display: block;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      margin-bottom: 12px;
+      background: var(--paper);
+    }
+    .detail-table td {
+      display: block;
+      border: none;
+      padding: 2px 0;
+    }
+  }
+
+  .mini-bar-track {
+    width: 90px; height: 2px;
+    background: var(--line);
+    overflow: hidden; display: inline-block;
+    vertical-align: 3px; margin-left: 10px;
+  }
+  .mini-bar-fill { height: 100%; background: var(--brown); }
+
+  .disclaimer {
+    background: var(--bg-alt);
+    border-radius: var(--radius);
+    padding: 24px 26px;
+    font-size: 13px;
+    color: var(--text);
+    line-height: 2;
+  }
+  .disclaimer strong {
+    font-family: var(--font-min);
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    color: var(--ink);
+    display: block; margin-bottom: 6px;
+  }
+
+  .result-actions { display: flex; gap: 14px; }
+  .result-actions .btn { flex: 1; }
+
+  /* ===== フッター: 建築サイト風のダークな帯 ===== */
+  .site-footer {
+    background: var(--dark);
+    text-align: center;
+    padding: 72px 20px 44px;
+  }
+  .site-footer strong {
+    display: block;
+    font-family: var(--font-min);
+    font-weight: 500;
+    font-size: 21px;
+    letter-spacing: 0.3em; text-indent: 0.3em;
+    color: var(--cream-text);
+  }
+  .site-footer .f-sub {
+    display: inline-block;
+    font-family: var(--font-en);
+    font-weight: 300;
+    font-size: 9.5px;
+    letter-spacing: 0.4em; text-indent: 0.4em;
+    color: var(--brown-soft);
+    margin: 10px 0 34px;
+  }
+  .site-footer .copyright {
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    color: #a8998a;
+    border-top: 1px solid rgba(203, 187, 164, 0.25);
+    padding-top: 26px;
+    max-width: 560px;
+    margin: 0 auto;
+  }
+
+  /* ===== 印刷: 結果はA4一枚の専用シートのみ出力 ===== */
+  .print-sheet { display: none; } /* 画面では非表示 */
+  @media print {
+    @page { size: A4 portrait; margin: 11mm 12mm; }
+    body { background: #fff; }
+    .topbar, .scroll-cue, .quiz-nav, .result-actions, .site-footer { display: none !important; }
+    .screen > *, .char-frame { animation: none !important; }
+    .container { padding: 0 !important; max-width: none; }
+    /* 結果画面: 画面用のセクションをすべて隠し、専用シートだけを出す */
+    .has-print-sheet > *:not(.print-sheet) { display: none !important; }
+    .print-sheet { display: block !important; }
+    /* 結果以外の画面を印刷した場合の保険 */
+    .card { border: 1px solid #ccc; break-inside: avoid; }
+  }
+
+  /* ===== A4結果シートのレイアウト（印刷時のみ表示） ===== */
+  .print-sheet {
+    color: #333;
+    font-size: 10.5px;
+    line-height: 1.7;
+    page-break-inside: avoid;
+  }
+  .print-sheet h2 {
+    font-family: var(--font-min);
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    color: #4a4038;
+    border-left: 3px solid #8a6a48;
+    padding-left: 8px;
+    margin-bottom: 7px;
+  }
+  .ps-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    border-bottom: 2px solid #4a4038;
+    padding-bottom: 8px;
+    margin-bottom: 12px;
+  }
+  .ps-brand {
+    font-family: var(--font-en);
+    font-size: 8px;
+    letter-spacing: 0.3em;
+    color: #8a6a48;
+  }
+  .ps-title {
+    font-family: var(--font-min);
+    font-weight: 600;
+    font-size: 17px;
+    letter-spacing: 0.12em;
+    color: #332e28;
+  }
+  .ps-meta { text-align: right; font-size: 10px; color: #555; }
+  .ps-applicant { font-weight: 700; color: #4a4038; }
+
+  /* 1段目: キャラクター＋フィット度ゲージ */
+  .ps-main {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 7mm;
+    margin-bottom: 11px;
+  }
+  .ps-chara { display: flex; align-items: center; gap: 10px; }
+  .ps-chara-art {
+    flex: 0 0 96px;
+    width: 96px; height: 96px;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid #cdbfa8;
+    border-radius: 50%;
+    background: #faf5ec;
+  }
+  .ps-chara-text { flex: 1; }
+  .ps-chara-lead { font-size: 8.5px; letter-spacing: 0.16em; color: #8a6a48; }
+  .ps-chara-name {
+    font-family: var(--font-min);
+    font-weight: 600;
+    font-size: 13.5px;
+    letter-spacing: 0.02em;
+    color: #332e28;
+    margin: 1px 0 3px;
+  }
+  .ps-chara-copy { font-size: 9.5px; color: #666; line-height: 1.65; }
+  .ps-fitbox {}
+  .ps-fit-flex { display: flex; align-items: center; gap: 12px; }
+  .ps-fit-comment { flex: 1; font-size: 9.5px; line-height: 1.8; color: #555; }
+
+  /* 2段目: レーダーチャート＋部署別バー */
+  .ps-dept-sec { margin-bottom: 11px; }
+  .ps-dept-flex {
+    display: grid;
+    grid-template-columns: 205px 1fr;
+    gap: 7mm;
+    align-items: center;
+  }
+  .ps-radar { text-align: center; }
+  /* 横棒スコア行（部署・特性で共用） */
+  .ps-bar-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+  }
+  .ps-bar-row .name { flex: 0 0 112px; font-size: 10px; letter-spacing: 0; }
+  .ps-dept-bars .ps-bar-row .name { flex: 0 0 80px; }
+  .ps-bar-row .bar {
+    flex: 1;
+    height: 5.5px;
+    background: #eee7da;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .ps-bar-row .fill { display: block; height: 100%; background: #8a6a48; }
+  .ps-bar-row .score {
+    flex: 0 0 24px;
+    text-align: right;
+    font-family: var(--font-en);
+    font-size: 11.5px;
+    color: #332e28;
+  }
+  .ps-bar-row .band { flex: 0 0 40px; font-size: 8.5px; text-align: center; color: #8a6a48; border: 1px solid #d8c9b2; border-radius: 7px; padding: 0 2px; }
+  .ps-best {
+    font-size: 9.5px;
+    color: #4a4038;
+    line-height: 1.75;
+    border-top: 1px dashed #ddd2c0;
+    margin-top: 6px;
+    padding-top: 6px;
+  }
+
+  /* 3段目: 特性スコア（2列） */
+  .ps-cats { margin-bottom: 11px; }
+  .ps-cats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 8mm;
+  }
+
+  /* 4段目: 強み／伸びしろの具体コメント */
+  .ps-profile {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 7mm;
+    margin-bottom: 11px;
+  }
+  .ps-point { font-size: 9.5px; line-height: 1.7; margin-bottom: 6px; }
+  .ps-point strong {
+    display: block;
+    font-size: 9.5px;
+    font-weight: 700;
+    color: #4a4038;
+  }
+
+  /* 5段目: 回答スタイル */
+  .ps-style { margin-bottom: 10px; }
+  .ps-style-row { font-size: 9px; line-height: 1.65; margin-bottom: 3px; }
+  .ps-style-row strong { color: #4a4038; font-weight: 700; margin-right: 7px; }
+
+  .ps-foot {
+    border-top: 1px solid #ccc;
+    padding-top: 6px;
+    font-size: 7.5px;
+    line-height: 1.6;
+    color: #888;
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+/* ============================================================
+   ▼ 進捗の一時保存（リロード事故対策）
+   sessionStorage を使用: このブラウザのタブ内のみ・タブを閉じると消える。
+   外部への送信は一切なし。結果表示のタイミングで自動削除する。
+   ============================================================ */
+const STORAGE_KEY = "sanjo-mbti-progress";
+function loadSavedProgress() {
+  try {
+    const d = JSON.parse(sessionStorage.getItem(STORAGE_KEY));
+    if (d && TYPE_PROFILES[d.type] && Array.isArray(d.answers)) return d;
+  } catch (e) { /* 破損データは無視して新規扱い */ }
+  return null;
+}
+function saveProgress(type, answers, applicant) {
+  try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ type, answers, applicant })); } catch (e) {}
+}
+function clearProgress() {
+  try { sessionStorage.removeItem(STORAGE_KEY); } catch (e) {}
+}
+
+/* ============================================================
+   ▼ 調整用定数（スコアの効き方を変えたいときはここ）
+   ============================================================ */
+const ANSWER_RATIO = 0.75;   // 部署スコアに占める「回答」の比率（残りはタイプ補正）
+const SCORE_FLOOR  = 40;     // スコア下限。素点0-100を FLOOR-100 に圧縮して底上げ
+
+/* ============================================================
+   ▼ カテゴリ定義（10カテゴリ）
+   ============================================================ */
+const CATEGORIES = {
+  stress:  "ストレス耐性・逆境対応",
+  nego:    "対人折衝・交渉力",
+  acc:     "正確性・緻密さ",
+  team:    "チームワーク・誠実性",
+  adapt:   "変化対応・段取り力",
+  drive:   "目標達成意欲・行動力",
+  create:  "創造性・デザイン感覚",
+  empathy: "傾聴・共感力",
+  plan:    "企画・分析・発信力",
+  learn:   "学習意欲・成長志向",
+};
+
+/* カルチャーフィット算出時のカテゴリ重み（合計1.0）
+   誠実性=team、現場/顧客対応の耐性=stress、変化対応=adapt、
+   若い成長企業ゆえ drive/learn も重視 */
+const CULTURE_WEIGHTS = {
+  team: 0.15, stress: 0.15, adapt: 0.12, drive: 0.12, learn: 0.12,
+  acc: 0.10, nego: 0.10, empathy: 0.07, create: 0.04, plan: 0.03,
+};
+
+/* 部署別適性のカテゴリ重み（7部門。各行合計1.0）
+   営業部        = 仕入れ(買取)・販売・価格交渉・目標達成
+   工務部        = 工程管理・施工業者折衝・工期(=金利負担)厳守
+   空間デザイナー = リノベーションプラン作成・商品企画
+   財務経理      = 金銭処理・資金管理・数字の正確性
+   契約管理(事務) = 契約書類手続き・物件資料作成・部署間連携
+   経営企画      = 制度設計・分析・会社の仕組みづくり
+   人事・広報    = 採用・育成・情報発信 */
+const DEPT_WEIGHTS = {
+  eigyo:   { drive: 0.30, nego: 0.25, stress: 0.20, empathy: 0.15, adapt: 0.10 },
+  koumu:   { adapt: 0.30, nego: 0.25, stress: 0.25, acc: 0.20 },
+  design:  { create: 0.40, adapt: 0.15, empathy: 0.15, acc: 0.15, learn: 0.15 },
+  zaimu:   { acc: 0.45, plan: 0.25, team: 0.20, stress: 0.10 },
+  keiyaku: { acc: 0.40, team: 0.30, empathy: 0.15, adapt: 0.15 },
+  kikaku:  { plan: 0.40, drive: 0.20, create: 0.15, learn: 0.15, team: 0.10 },
+  jinji:   { empathy: 0.30, plan: 0.20, team: 0.20, create: 0.15, nego: 0.15 },
+};
+
+const DEPT_INFO = {
+  eigyo:   { name: "営業部", short: "営業",
+    comment: "物件の仕入れ（買取）と販売が主戦場。仲介業者・売主との交渉と目標達成意欲が問われる最前線。" },
+  koumu:   { name: "工務部（商品コーディネーター）", short: "工務",
+    comment: "年間1,000件超の物件の工程管理と施工業者との折衝を担い、工期（＝金利負担）を守り抜く現場の司令塔。" },
+  design:  { name: "空間デザイナー", short: "デザイナー",
+    comment: "買い取った中古物件のリノベーションプランを作成し、「売れる空間」を創造するデザイン職。" },
+  zaimu:   { name: "財務経理", short: "財務経理",
+    comment: "1円単位の正確な金銭処理と資金管理で会社の土台を支える、数字の番人。" },
+  keiyaku: { name: "契約管理（事務）", short: "契約管理",
+    comment: "買取契約の書類手続きや物件資料の作成、各部署との連携で全社を支える事務の要。" },
+  kikaku:  { name: "経営企画", short: "経営企画",
+    comment: "会社全体の数字と戦略を見据え、急成長する組織の仕組みをつくる参謀役。" },
+  jinji:   { name: "人事・広報", short: "人事広報",
+    comment: "採用・育成と情報発信で「会社の顔」をつくり、組織の成長を人の面から支えるポジション。" },
+};
+
+/* ============================================================
+   ▼ 共通の基礎質問 60問（10カテゴリ×6問。逆転項目 rev:true は19問）
+   三条工務店の業務文脈（買取再販・工期・施工業者折衝・契約書類・
+   事故物件対応など）に沿った具体的な行動を問う。
+   ============================================================ */
+const COMMON_QUESTIONS = [
+  /* --- ①ストレス耐性・逆境対応 --- */
+  { text: "納期や工期が迫る状況でも、落ち着いて優先順位を整理できる", cat: "stress", rev: false },
+  { text: "顧客や取引先から厳しい指摘を受けると、しばらく仕事が手につかなくなる", cat: "stress", rev: true },
+  { text: "クレームやトラブルへの対応も、経験を積む機会として前向きに捉えられる", cat: "stress", rev: false },
+  { text: "想定外の出費やスケジュールの遅れが発生しても、感情的にならずに対処できる", cat: "stress", rev: false },
+  { text: "複数の関係者から同時に急ぎの依頼を受けると、頭が真っ白になりやすい", cat: "stress", rev: true },
+  { text: "うまくいかない日があっても、気持ちを切り替えて翌日の仕事に臨める", cat: "stress", rev: false },
+
+  /* --- ②対人折衝・交渉力 --- */
+  { text: "初対面の相手とも、要点を押さえて交渉や調整を進められる", cat: "nego", rev: false },
+  { text: "立場や利害の異なる相手と条件をすり合わせる場面は、できれば避けたい", cat: "nego", rev: true },
+  { text: "相手の要望を丁寧に聞き出し、双方が納得できる着地点を探るのが得意だ", cat: "nego", rev: false },
+  { text: "年上の職人や経験豊富な相手に対しても、必要なことをはっきり伝えられる", cat: "nego", rev: false },
+  { text: "価格や条件の交渉で、根拠を示しながら自分の主張を通した経験がある", cat: "nego", rev: false },
+  { text: "強く主張されると、内心納得していなくても相手に合わせてしまう", cat: "nego", rev: true },
+
+  /* --- ③正確性・緻密さ --- */
+  { text: "書類や数字の細かい誤りに、自然と目が行くほうだ", cat: "acc", rev: false },
+  { text: "作業のスピードを優先して、細部の確認を省略してしまうことがある", cat: "acc", rev: true },
+  { text: "決められた手順やルールを、最後まで正確に守り切ることができる", cat: "acc", rev: false },
+  { text: "契約書や重要書類は、隅々まで読んでから署名・処理するタイプだ", cat: "acc", rev: false },
+  { text: "金銭や数量の管理では、1円・1個単位のズレも放置したくない", cat: "acc", rev: false },
+  { text: "同じ作業を長く繰り返していると、集中力が落ちてミスが増えやすい", cat: "acc", rev: true },
+
+  /* --- ④チームワーク・誠実性 --- */
+  { text: "自分の担当外の仕事でも、チームが困っていれば進んで手を貸す", cat: "team", rev: false },
+  { text: "仕事は基本的に一人で完結させたく、他部署との連携は煩わしいと感じる", cat: "team", rev: true },
+  { text: "ミスや遅れが起きたとき、事実をありのまま関係者に報告・共有できる", cat: "team", rev: false },
+  { text: "約束した期日や報告のタイミングは、必ず守るようにしている", cat: "team", rev: false },
+  { text: "自分個人の成果よりも、チーム全体の成果を優先して動けるほうだ", cat: "team", rev: false },
+  { text: "忙しいとき、周囲への報告・連絡・相談が後回しになりがちだ", cat: "team", rev: true },
+
+  /* --- ⑤変化対応・段取り力 --- */
+  { text: "予定していた段取りが崩れても、すぐに代替案を組み直せる", cat: "adapt", rev: false },
+  { text: "複数の案件を並行して進めるとき、全体のスケジュールを俯瞰して管理できる", cat: "adapt", rev: false },
+  { text: "一度決めたやり方を途中で変えることには、強い抵抗を感じる", cat: "adapt", rev: true },
+  { text: "締切から逆算して、途中の工程に予備日を設けるのが習慣になっている", cat: "adapt", rev: false },
+  { text: "新しいツールや仕事の進め方を、抵抗なく取り入れられる", cat: "adapt", rev: false },
+  { text: "急な予定変更が続くと、仕事への意欲が大きく下がってしまう", cat: "adapt", rev: true },
+
+  /* --- ⑥目標達成意欲・行動力 --- */
+  { text: "数字の目標を与えられると、達成までの道筋を自分で考えて動ける", cat: "drive", rev: false },
+  { text: "目標に届かなかったとき、原因を分析して次の行動を変えられる", cat: "drive", rev: false },
+  { text: "高い目標に挑むより、確実にこなせる範囲の仕事のほうが好きだ", cat: "drive", rev: true },
+  { text: "迷ったときは、まず行動して結果から学ぶほうだ", cat: "drive", rev: false },
+  { text: "同期や同僚の活躍を聞くと、「自分も頑張ろう」と燃えるタイプだ", cat: "drive", rev: false },
+  { text: "成果が出るまで時間のかかる仕事は、途中でモチベーションが続かない", cat: "drive", rev: true },
+
+  /* --- ⑦創造性・デザイン感覚 --- */
+  { text: "部屋や空間のレイアウト・配色を考えるのが好きだ", cat: "create", rev: false },
+  { text: "街を歩くとき、建物の外観や内装のデザインに自然と目が行く", cat: "create", rev: false },
+  { text: "既存のやり方をなぞるより、自分なりの工夫やアイデアを加えたくなる", cat: "create", rev: false },
+  { text: "「センスがいいね」「発想が面白いね」と言われることがある", cat: "create", rev: false },
+  { text: "住まいやインテリアの流行・トレンドには、あまり興味が持てない", cat: "create", rev: true },
+  { text: "ゼロから何かを生み出すより、決められたものを正確に仕上げるほうが得意だ", cat: "create", rev: true },
+
+  /* --- ⑧傾聴・共感力 --- */
+  { text: "相手が話しやすいように、聞き役に回ることができる", cat: "empathy", rev: false },
+  { text: "相手の表情や声のトーンから、気持ちの変化に気づけるほうだ", cat: "empathy", rev: false },
+  { text: "事情を抱えた相手の話でも、先入観を持たずに最後まで聞ける", cat: "empathy", rev: false },
+  { text: "友人や同僚から、悩みや相談事を打ち明けられることが多い", cat: "empathy", rev: false },
+  { text: "相手の話が長いと、つい途中で結論を促してしまう", cat: "empathy", rev: true },
+  { text: "感情的になっている相手への対応は、正直かなり苦手だ", cat: "empathy", rev: true },
+
+  /* --- ⑨企画・分析・発信力 --- */
+  { text: "情報やデータを整理して、資料やレポートにまとめるのが得意だ", cat: "plan", rev: false },
+  { text: "物事の仕組みや制度を「もっと良くできないか」と考えるのが好きだ", cat: "plan", rev: false },
+  { text: "自分の考えを、文章や図にして人に分かりやすく伝えられる", cat: "plan", rev: false },
+  { text: "会社や組織全体の数字・動きに興味があるほうだ", cat: "plan", rev: false },
+  { text: "人前で発表したり、発信したりする役回りはできれば避けたい", cat: "plan", rev: true },
+  { text: "調べたり分析したりするより、体を動かす仕事のほうが性に合う", cat: "plan", rev: true },
+
+  /* --- ⑩学習意欲・成長志向 --- */
+  { text: "新しい知識や資格の勉強を、自分から進んで始めるほうだ", cat: "learn", rev: false },
+  { text: "指摘やフィードバックは、耳が痛くてもありがたいと感じる", cat: "learn", rev: false },
+  { text: "経験のない仕事を任されると、不安より楽しみのほうが大きい", cat: "learn", rev: false },
+  { text: "若いうちから責任ある仕事に挑戦したいという気持ちが強い", cat: "learn", rev: false },
+  { text: "慣れた仕事のやり方を変えてまで、新しいことを学ぶ必要は感じない", cat: "learn", rev: true },
+  { text: "分からないことがあると、まず自分で調べてから人に聞く", cat: "learn", rev: false },
+];
+
+/* ============================================================
+   ▼ タイプ別出し分け質問プール
+   MBTIの各文字ごとに2問を用意し、選択タイプの4文字 × 2問 = 8問を合成。
+   そのタイプが「苦手になりやすい領域」を確認する設計。
+   ============================================================ */
+const LETTER_QUESTIONS = {
+  E: [ // 外向型 → 単独での精緻作業・デスクワーク適性を確認
+    { text: "一人で黙々と書類チェックや数字の確認を行う作業にも、集中して取り組める", cat: "acc", rev: false },
+    { text: "静かな個人作業が長時間続くと、集中力が切れやすいと感じる", cat: "acc", rev: true },
+    { text: "チームで話し合いながら進める仕事のほうが、一人で進めるより成果を出しやすい", cat: "team", rev: false },
+    { text: "一日中デスクで資料を作り込む日が続くと、物足りなさを感じる", cat: "plan", rev: true },
+  ],
+  I: [ // 内向型 → 対外折衝・消耗度を確認
+    { text: "必要とあれば、自分から施工業者や顧客に連絡を取り、率直に交渉できる", cat: "nego", rev: false },
+    { text: "電話や対面でのやり取りが続く日は、普段より大きく消耗してしまう", cat: "stress", rev: true },
+    { text: "相手の懐に入る雑談やアイスブレイクは、正直得意ではない", cat: "nego", rev: true },
+    { text: "一人で集中して考える時間があると、仕事の質が上がるタイプだ", cat: "acc", rev: false },
+  ],
+  S: [ // 感覚型 → 前例のない状況・構想業務への対応を確認
+    { text: "現場や実務で得た具体的な情報をもとに、着実に判断を積み上げるのが得意だ", cat: "acc", rev: false },
+    { text: "前例のない状況では、方針が固まるまでなかなか動き出せない", cat: "adapt", rev: true },
+    { text: "図面や仕様書など、細かい情報を正確に読み取るのが得意だ", cat: "acc", rev: false },
+    { text: "「将来の構想を描く」仕事より「今日やるべきことを片付ける」仕事のほうが好きだ", cat: "plan", rev: true },
+  ],
+  N: [ // 直観型 → 実務への落とし込み・ルーチン遂行を確認
+    { text: "新しいアイデアを思いついたとき、実行に必要な手順やコストまで具体的に詰められる", cat: "adapt", rev: false },
+    { text: "毎日のルーチン作業は、つい後回しにしてしまいがちだ", cat: "acc", rev: true },
+    { text: "完成後の空間や暮らしのイメージを、頭の中で具体的に思い描ける", cat: "create", rev: false },
+    { text: "細かい書類仕事が続くと、うっかりミスが出やすい", cat: "acc", rev: true },
+  ],
+  T: [ // 思考型 → 対人配慮・共感面を確認
+    { text: "正しい指摘をするときも、相手の立場や感情に配慮した伝え方を選べる", cat: "team", rev: false },
+    { text: "結論を急ぐあまり、相手の気持ちの整理を待てないことがある", cat: "team", rev: true },
+    { text: "相手の頑張りや貢献を、意識して言葉にして伝えるほうだ", cat: "empathy", rev: false },
+    { text: "効率を優先しすぎて、周囲から「冷たい」と言われたことがある", cat: "empathy", rev: true },
+  ],
+  F: [ // 感情型 → 数値・論理に基づく判断を確認
+    { text: "相手に共感する場面でも、数字や契約条件に基づいて冷静に判断できる", cat: "acc", rev: false },
+    { text: "人間関係への影響を気にして、言うべき指摘を先送りすることがある", cat: "nego", rev: true },
+    { text: "感情に流されず、損益やリスクの数字をもとに判断を下せる", cat: "plan", rev: false },
+    { text: "断る場面や厳しい条件を伝える場面では、必要以上に胸が痛む", cat: "nego", rev: true },
+  ],
+  J: [ // 判断型 → 計画変更への柔軟性を確認
+    { text: "計画の変更を求められたとき、不満よりも先に修正案を考えられる", cat: "adapt", rev: false },
+    { text: "想定外の割り込み仕事が入ると、ペースを大きく乱されてしまう", cat: "stress", rev: true },
+    { text: "状況が流動的な案件でも、まず動きながら形にしていける", cat: "adapt", rev: false },
+    { text: "マニュアルや前例のない仕事には、着手までに時間がかかる", cat: "adapt", rev: true },
+  ],
+  P: [ // 知覚型 → 締切対応・段取りを確認
+    { text: "締切から逆算して、余裕を持った段取りを自分で組み立てられる", cat: "adapt", rev: false },
+    { text: "着手が遅れて、締切直前に慌てて仕上げることがよくある", cat: "acc", rev: true },
+    { text: "長期の案件でも、途中の締切を自分で設定して計画的に進められる", cat: "adapt", rev: false },
+    { text: "書類の提出期限や事務手続きを、うっかり忘れてしまうことがある", cat: "acc", rev: true },
+  ],
+};
+
+/* 選択タイプ("ESTJ"等) → 76問の質問リストを返す */
+function buildQuestions(type) {
+  const extra = type.split("").flatMap(letter => LETTER_QUESTIONS[letter]);
+  return [...COMMON_QUESTIONS, ...extra]; // 60 + 16 = 76問
+}
+
+/* ============================================================
+   ▼ タイプごとの部署補正（0-100の基礎相性。回答スコアと合成される）
+   ============================================================ */
+const TYPE_BONUS = {
+  ISTJ: { eigyo: 50, koumu: 70, design: 45, zaimu: 88, keiyaku: 85, kikaku: 65, jinji: 50 },
+  ISFJ: { eigyo: 50, koumu: 60, design: 50, zaimu: 75, keiyaku: 88, kikaku: 50, jinji: 70 },
+  INFJ: { eigyo: 55, koumu: 55, design: 65, zaimu: 65, keiyaku: 70, kikaku: 70, jinji: 80 },
+  INTJ: { eigyo: 50, koumu: 80, design: 60, zaimu: 80, keiyaku: 65, kikaku: 85, jinji: 50 },
+  ISTP: { eigyo: 50, koumu: 85, design: 55, zaimu: 65, keiyaku: 60, kikaku: 50, jinji: 40 },
+  ISFP: { eigyo: 55, koumu: 60, design: 80, zaimu: 55, keiyaku: 65, kikaku: 45, jinji: 60 },
+  INFP: { eigyo: 55, koumu: 50, design: 75, zaimu: 50, keiyaku: 60, kikaku: 55, jinji: 75 },
+  INTP: { eigyo: 45, koumu: 65, design: 60, zaimu: 80, keiyaku: 70, kikaku: 80, jinji: 45 },
+  ESTP: { eigyo: 85, koumu: 75, design: 50, zaimu: 45, keiyaku: 45, kikaku: 50, jinji: 55 },
+  ESFP: { eigyo: 85, koumu: 55, design: 65, zaimu: 40, keiyaku: 50, kikaku: 45, jinji: 70 },
+  ENFP: { eigyo: 80, koumu: 55, design: 75, zaimu: 40, keiyaku: 45, kikaku: 60, jinji: 80 },
+  ENTP: { eigyo: 85, koumu: 65, design: 65, zaimu: 45, keiyaku: 45, kikaku: 75, jinji: 65 },
+  ESTJ: { eigyo: 70, koumu: 85, design: 45, zaimu: 70, keiyaku: 65, kikaku: 75, jinji: 55 },
+  ESFJ: { eigyo: 75, koumu: 60, design: 55, zaimu: 60, keiyaku: 75, kikaku: 55, jinji: 80 },
+  ENFJ: { eigyo: 80, koumu: 60, design: 60, zaimu: 50, keiyaku: 60, kikaku: 70, jinji: 85 },
+  ENTJ: { eigyo: 75, koumu: 80, design: 50, zaimu: 60, keiyaku: 50, kikaku: 85, jinji: 60 },
+};
+
+/* ============================================================
+   ▼ タイプ解説（一言説明＋ビジネス上の強み/成長ポイント/チーム内役割）
+   すべてポジティブ・建設的な表現で記述する。
+   ============================================================ */
+const TYPE_PROFILES = {
+  ISTJ: { label: "堅実な管理者",
+    strengths: ["決めたことを最後までやり抜く責任感", "数字・書類の正確な処理", "ルールと期日を確実に守る信頼性"],
+    growth: ["急な計画変更にも柔軟に構えると強みがさらに活きる", "自分の考えを早めに言葉にすると連携が円滑に"],
+    role: "チームの土台を支える実務の要。安定した進行と正確さで周囲に安心感を与える。" },
+  ISFJ: { label: "献身的なサポーター",
+    strengths: ["細やかな気配りとサポート力", "コツコツ続ける粘り強さ", "頼まれたことを丁寧に仕上げる誠実さ"],
+    growth: ["抱え込む前に周囲へ相談すると負担が分散できる", "自分の成果も積極的に伝えると評価につながる"],
+    role: "縁の下でチームを支える調整役。困っている人に自然に手を差し伸べる存在。" },
+  INFJ: { label: "洞察力のある理想家",
+    strengths: ["相手の本音を汲み取る洞察力", "長期的な視点での計画性", "静かな粘り強さ"],
+    growth: ["完璧を目指しすぎず、まず形にして共有すると前進が早い", "考えを早めに開示すると協力を得やすい"],
+    role: "チームの方向性に深みを与える参謀役。メンバーの変化にいち早く気づく。" },
+  INTJ: { label: "戦略的な設計者",
+    strengths: ["全体を見通す戦略的思考", "工程やコストの構造的な把握", "独力で課題を解決する推進力"],
+    growth: ["結論に至った理由を丁寧に共有すると納得を得やすい", "現場の声を早めに取り込むと計画の精度が上がる"],
+    role: "複雑な案件の設計図を描く頭脳役。長期の段取りと改善提案で価値を発揮。" },
+  ISTP: { label: "現場対応の職人",
+    strengths: ["トラブル時の冷静な対処力", "実物・現場ベースの的確な判断", "手を動かして解決する実践力"],
+    growth: ["進捗や判断の共有をこまめにすると周囲が動きやすい", "定型業務も仕組み化すると強みに変わる"],
+    role: "現場で頼りにされる即応型のプレーヤー。突発事態でも慌てず対処できる。" },
+  ISFP: { label: "柔軟な実務家",
+    strengths: ["相手に合わせる柔軟さと温かさ", "五感を活かした品質へのこだわり", "押し付けのない自然な協調性"],
+    growth: ["意見を求められたら遠慮なく伝えると議論が深まる", "優先順位を先に決めると複数案件でも安定する"],
+    role: "チームの雰囲気を和らげる潤滑油。丁寧な仕事ぶりで信頼を積み重ねる。" },
+  INFP: { label: "誠実な理想追求者",
+    strengths: ["仕事の意義を大切にする誠実さ", "相手の気持ちに寄り添う共感力", "納得したことへの高い集中力"],
+    growth: ["完成度より締切を優先する場面を意識すると評価が安定する", "数字で語る習慣をつけると説得力が増す"],
+    role: "顧客やメンバーの想いを汲み取る良心役。価値観の合う仕事で大きな力を発揮。" },
+  INTP: { label: "分析型の問題解決者",
+    strengths: ["物事の仕組みを見抜く分析力", "客観的で偏りのない判断", "複雑な問題を整理する思考力"],
+    growth: ["分析結果を期限内にアウトプットする意識で強みが活きる", "結論を先に伝えると会話が噛み合いやすい"],
+    role: "データや契約の矛盾を見つける検証役。チームの意思決定に論理の裏付けを与える。" },
+  ESTP: { label: "行動力ある交渉人",
+    strengths: ["その場の状況を読む反射神経", "物怖じしない交渉力・行動力", "変化を楽しむフットワーク"],
+    growth: ["書類・数字の最終確認をルーチン化するとミスを防げる", "長期案件は節目ごとの振り返りが効果的"],
+    role: "商談や現場調整の最前線で動くムードメーカー。停滞した局面を動かす突破役。" },
+  ESFP: { label: "場を明るくする実践家",
+    strengths: ["誰とでも打ち解ける親しみやすさ", "顧客の反応を捉える観察力", "行動しながら学ぶ吸収力"],
+    growth: ["事務処理は先に片付ける習慣で信頼がさらに高まる", "長期計画は仲間と共有しながら進めると続けやすい"],
+    role: "顧客との距離を一気に縮める潤滑油。チームの士気を高めるエネルギー源。" },
+  ENFP: { label: "発想豊かな共感者",
+    strengths: ["新しい企画を生み出す発想力", "人を巻き込む熱意と共感力", "顧客の潜在ニーズを引き出す会話力"],
+    growth: ["着手した案件をやり切る仕組み（リスト化等）で成果が安定する", "細部の確認は仲間と分担すると効率的"],
+    role: "チームに新しい風を吹き込む起点役。人と人をつなぎ、可能性を広げる。" },
+  ENTP: { label: "機転の利く挑戦者",
+    strengths: ["制約の中で打ち手を見つける機転", "議論で本質を突く思考力", "新しい手法への挑戦意欲"],
+    growth: ["決まった方針をやり切る継続力が加わると無敵に近づく", "相手のペースに合わせる余裕が交渉の幅を広げる"],
+    role: "行き詰まった交渉や企画に突破口を開くアイデアマン。変化の局面で輝く。" },
+  ESTJ: { label: "頼れる現場監督",
+    strengths: ["工程・人・コストを仕切る管理能力", "決断の速さと実行力", "責任感に裏打ちされた統率力"],
+    growth: ["メンバーの事情に耳を傾ける余白があるとチームがさらに強くなる", "例外対応も選択肢として持つと幅が広がる"],
+    role: "計画を確実に前へ進める推進役。期日と品質を守る現場のリーダー。" },
+  ESFJ: { label: "気配りの調整役",
+    strengths: ["チーム全体への細やかな気配り", "顧客に安心感を与える対応力", "約束を守る堅実さ"],
+    growth: ["全員の要望に応えようとしすぎず優先順位をつけると楽になる", "変化はチャンスと捉えると強みが広がる"],
+    role: "部署間の橋渡しを担う調整役。顧客・仲間の信頼を集める会社の顔。" },
+  ENFJ: { label: "人を動かすまとめ役",
+    strengths: ["メンバーの強みを引き出す指導力", "場の空気を作るコミュニケーション力", "目標に向けて人を束ねる力"],
+    growth: ["自分自身の負荷にも目を向けると長く力を発揮できる", "厳しい判断も先送りしないと信頼が深まる"],
+    role: "チームの結束を高めるまとめ役。顧客との長期的な関係構築でも力を発揮。" },
+  ENTJ: { label: "目標達成のリーダー",
+    strengths: ["目標から逆算する計画力と推進力", "数字への強いコミットメント", "困難な交渉をまとめる胆力"],
+    growth: ["メンバーの歩幅に合わせる場面を作るとチーム全体が加速する", "プロセスへのねぎらいが人を動かす"],
+    role: "高い目標を掲げてチームを牽引する推進役。事業を伸ばす原動力。" },
+};
+
+/* ============================================================
+   ▼ 結果キャラクター（名前・キャッチコピー・ドット絵・特性プロファイル）
+   MBTIタイプ固定ではなく、回答から算出した10カテゴリのスコアと
+   各キャラの traits（特性プロファイル）のマッチ度が最も高いキャラを選定する。
+   traits: { カテゴリ: 重み } — 重みの合計は1.0にする。
+   grid: 12x12のドット絵。「.」は透明、他の文字は palette の色に対応。
+   ============================================================ */
+const CHARACTERS = {
+  kame: {
+    traits: { acc: 0.50, team: 0.30, stress: 0.20 },
+    name: "守りの鉄壁・カメ金庫番",
+    copy: "締切・契約・1円のズレも見逃さない。ゆっくり見えて、誰よりも確実にゴールする堅実派。",
+    palette: { D: "#3f7a3a", G: "#69a35e", W: "#ffffff", B: "#222222", M: "#2f4f2f" },
+    grid: [
+      "....DDDD....",
+      "..DDDDDDDD..",
+      ".DGGGGGGGGD.",
+      ".GGGGGGGGGG.",
+      ".GWWGGGGWWG.",
+      ".GWBGGGGWBG.",
+      ".GGGGGGGGGG.",
+      ".GGGMMMMGGG.",
+      "..GGGGGGGG..",
+      "...GGGGGG...",
+      "....G..G....",
+      "............",
+    ],
+  },
+  pochi: {
+    traits: { team: 0.45, empathy: 0.35, acc: 0.20 },
+    name: "忠実サポート犬・ポチ主任",
+    copy: "困っている人を放っておけない。頼まれごとは絶対に忘れない、縁の下の世話役。",
+    palette: { E: "#a5652f", T: "#d9a05b", W: "#ffffff", B: "#222222", N: "#5b3a1e", R: "#c0392b" },
+    grid: [
+      ".EE......EE.",
+      ".EETTTTTTEE.",
+      ".ETTTTTTTTE.",
+      ".ETTTTTTTTE.",
+      ".TWWTTTTWWT.",
+      ".TWBTTTTWBT.",
+      ".TTTTNNTTTT.",
+      ".TTTTTTTTTT.",
+      ".RRRRRRRRRR.",
+      "..RRRRRRRR..",
+      "............",
+      "............",
+    ],
+  },
+  fukurou: {
+    traits: { empathy: 0.40, plan: 0.35, team: 0.25 },
+    name: "森の賢者・フクロウ和尚",
+    copy: "静かに本質を見抜く洞察の人。チームの心の動きにいち早く気づく精神的支柱。",
+    palette: { F: "#8d6e4b", L: "#e9d8b2", W: "#ffffff", B: "#222222", Y: "#e8a13c" },
+    grid: [
+      ".FF......FF.",
+      ".FFFFFFFFFF.",
+      ".FLLLFFLLLF.",
+      ".FLWLLLLWLF.",
+      ".FLWBLLWBLF.",
+      ".FLLLYYLLLF.",
+      ".FFLLYYLLFF.",
+      ".FFFLLLLFFF.",
+      ".FFFFFFFFFF.",
+      "..FFFFFFFF..",
+      "...FF..FF...",
+      "............",
+    ],
+  },
+  kuroneko: {
+    traits: { plan: 0.45, acc: 0.30, adapt: 0.25 },
+    name: "影の軍師・クロネコ参謀",
+    copy: "常に3手先を読む静かな戦略家。工程もコストも、まず頭の中に設計図を描く。",
+    palette: { K: "#3a3a4a", E: "#f5d76e", B: "#222222", P: "#e08a8a" },
+    grid: [
+      "..K......K..",
+      "..KK....KK..",
+      "..KKKKKKKK..",
+      ".KKKKKKKKKK.",
+      ".KEEKKKKEEK.",
+      ".KEBKKKKEBK.",
+      ".KKKKPPKKKK.",
+      ".KKKKKKKKKK.",
+      "..KKKKKKKK..",
+      "...KKKKKK...",
+      "............",
+      "............",
+    ],
+  },
+  beaver: {
+    traits: { adapt: 0.35, acc: 0.35, stress: 0.30 },
+    name: "現場の匠・ビーバー棟梁",
+    copy: "道具と現場をこよなく愛する職人肌。トラブルほど腕が鳴る、寡黙な問題解決人。",
+    palette: { Y: "#f1c40f", N: "#8a5a33", M: "#c98d5a", W: "#ffffff", B: "#222222" },
+    grid: [
+      "....YYYY....",
+      "..YYYYYYYY..",
+      ".YYYYYYYYYY.",
+      ".NNNNNNNNNN.",
+      ".NNBNNNNBNN.",
+      ".NNNNMMNNNN.",
+      ".NNMMMMMMNN.",
+      ".NNMWWWWMNN.",
+      ".NNNWWWWNNN.",
+      "..NNNNNNNN..",
+      "...NNNNNN...",
+      "............",
+    ],
+  },
+  usagi: {
+    traits: { create: 0.50, empathy: 0.30, acc: 0.20 },
+    name: "感性の画伯・アトリエうさぎ",
+    copy: "心地よい空間づくりの名人。声は小さいが、こだわりは誰よりも大きいアーティスト。",
+    palette: { W: "#f8f8f4", P: "#f4b8c4", R: "#e74c3c", B: "#222222" },
+    grid: [
+      "...WW..WW...",
+      "...WP..PW...",
+      "...WP..PW...",
+      "..RRRRRRRR..",
+      ".WWWWWWWWWW.",
+      ".WWBWWWWBWW.",
+      ".WWWWPPWWWW.",
+      ".WWWWWWWWWW.",
+      "..WWWWWWWW..",
+      "...WWWWWW...",
+      "............",
+      "............",
+    ],
+  },
+  hitsuji: {
+    traits: { empathy: 0.45, create: 0.35, learn: 0.20 },
+    name: "夢見る詩人・ふわふわ羊",
+    copy: "想いを何より大切にする理想家。共感力で、家に「物語」を吹き込むタイプ。",
+    palette: { C: "#f3efe6", F: "#caa27e", B: "#222222", P: "#f4b8c4" },
+    grid: [
+      "..CCCCCCCC..",
+      ".CCCCCCCCCC.",
+      ".CCFFFFFFCC.",
+      ".CFFFFFFFFC.",
+      ".CFBFFFFBFC.",
+      ".CFFFFFFFFC.",
+      ".CFPFFFFPFC.",
+      ".CFFFFFFFFC.",
+      ".CCFFFFFFCC.",
+      "..CCCCCCCC..",
+      "............",
+      "............",
+    ],
+  },
+  penguin: {
+    traits: { plan: 0.40, acc: 0.40, learn: 0.20 },
+    name: "理屈の探究者・ペンギン博士",
+    copy: "口ぐせは「なぜ？」。データと論理で矛盾を見つけ出す、歩く検算マシン。",
+    palette: { K: "#2c3e50", W: "#ffffff", G: "#555555", B: "#222222", Y: "#e8a13c" },
+    grid: [
+      "..KKKKKKKK..",
+      ".KKKKKKKKKK.",
+      ".KKWWWWWWKK.",
+      ".KGGGWWGGGK.",
+      ".KGBGWWGBGK.",
+      ".KKWWYYWWKK.",
+      ".KKWWYYWWKK.",
+      ".KKWWWWWWKK.",
+      ".KKKKKKKKKK.",
+      "..KKKKKKKK..",
+      "............",
+      "............",
+    ],
+  },
+  hayabusa: {
+    traits: { drive: 0.40, nego: 0.35, stress: 0.25 },
+    name: "稲妻ハンター・ハヤブサ営業",
+    copy: "考えるより先に体が動く。商機の匂いを100km先から嗅ぎつける狩人。",
+    palette: { S: "#7d97ad", W: "#ffffff", B: "#222222", Y: "#e8a13c", R: "#c0392b" },
+    grid: [
+      "..SSSSSSSS..",
+      ".SSSSSSSSSS.",
+      ".SSSSSSSSSS.",
+      ".SBBSSSSBBS.",
+      ".SWBSSSSBWS.",
+      ".SSSSYYSSSS.",
+      ".SSSYYYYSSS.",
+      ".SSSSYYSSSS.",
+      ".SSSSSSSSSS.",
+      "..SSSSSSSS..",
+      "....RRRR....",
+      "............",
+    ],
+  },
+  inko: {
+    traits: { empathy: 0.40, nego: 0.30, create: 0.30 },
+    name: "太陽の座長・ごきげんインコ",
+    copy: "いるだけで場が明るくなる天性のエンターテイナー。お客様の心を一瞬でつかむ。",
+    palette: { G: "#7bc74d", K: "#333333", O: "#e8912d", Y: "#f7d154" },
+    grid: [
+      "....GGGG....",
+      "..GGGGGGGG..",
+      ".GGGGGGGGGG.",
+      ".GKKGGGGKKG.",
+      ".GKKGGGGKKG.",
+      ".GGGGOOGGGG.",
+      ".GYGOOOOGYG.",
+      ".GYGGOOGGYG.",
+      ".GGGGGGGGGG.",
+      "..GGGGGGGG..",
+      "............",
+      "............",
+    ],
+  },
+  risu: {
+    traits: { create: 0.40, learn: 0.30, drive: 0.30 },
+    name: "ひらめき花火師・アイデアリス",
+    copy: "頭の中はアイデアの貯蔵庫。思いつきに人を巻き込む、企画の火付け役。",
+    palette: { N: "#c77b3f", M: "#e8ab6f", B: "#222222", P: "#e08a8a" },
+    grid: [
+      "..N......N..",
+      "..NN....NN..",
+      "..NNNNNNNN..",
+      ".NNNNNNNNNN.",
+      ".NNBNNNNBNN.",
+      ".NNNNNNNNNN.",
+      ".NMMNNNNMMN.",
+      ".NNNNPPNNNN.",
+      "..NNNNNNNN..",
+      "...NNNNNN...",
+      "............",
+      "............",
+    ],
+  },
+  kitsune: {
+    traits: { nego: 0.35, plan: 0.35, create: 0.30 },
+    name: "切り返しの発明王・キツネ軍略家",
+    copy: "議論と新手法が大好物。「その手があったか」を毎週生み出す知恵者。",
+    palette: { O: "#e67e22", W: "#ffffff", K: "#333333", B: "#222222", R: "#c0392b" },
+    grid: [
+      ".OO......OO.",
+      ".OOO....OOO.",
+      ".OOOOOOOOOO.",
+      ".OOOOOOOOOO.",
+      ".OBBOOOOBBO.",
+      ".OOOOOOOOOO.",
+      ".OOWWWWWWOO.",
+      ".OOWWKKWWOO.",
+      "..OOWWWWOO..",
+      "...OOOOOO...",
+      "....RRRR....",
+      "............",
+    ],
+  },
+  gorilla: {
+    traits: { adapt: 0.40, drive: 0.30, nego: 0.30 },
+    name: "鉄の段取り・ゴリラ現場監督",
+    copy: "工期は絶対。人もスケジュールも束ねて、決めたことは必ずやり切る統率者。",
+    palette: { Y: "#f1c40f", D: "#4a4a52", M: "#8f8f98", B: "#222222" },
+    grid: [
+      "....YYYY....",
+      "..YYYYYYYY..",
+      ".YYYYYYYYYY.",
+      ".DDDDDDDDDD.",
+      ".DDBDDDDBDD.",
+      ".DDDDDDDDDD.",
+      ".DMMMMMMMMD.",
+      ".DMMBBBBMMD.",
+      ".DMMMMMMMMD.",
+      "..DDDDDDDD..",
+      "...DDDDDD...",
+      "............",
+    ],
+  },
+  panda: {
+    traits: { team: 0.40, empathy: 0.40, nego: 0.20 },
+    name: "おもてなし支配人・きくばりパンダ",
+    copy: "全方位に気配りの達人。社内外の「ありがとう」を一身に集める調整役。",
+    palette: { K: "#2b2b2b", W: "#ffffff", B: "#000000", R: "#c0392b" },
+    grid: [
+      ".KK......KK.",
+      ".KKK....KKK.",
+      "..WWWWWWWW..",
+      ".WWWWWWWWWW.",
+      ".WKKWWWWKKW.",
+      ".WKBWWWWKBW.",
+      ".WWWWKKWWWW.",
+      ".WWWWWWWWWW.",
+      "..WWWWWWWW..",
+      "....RRRR....",
+      "............",
+      "............",
+    ],
+  },
+  kuma: {
+    traits: { drive: 0.35, empathy: 0.35, team: 0.30 },
+    name: "みんなの応援団長・コーチ熊",
+    copy: "人の成長が自分の喜び。チームを一つにまとめる、頼れる兄貴・姉御肌。",
+    palette: { C: "#3b6ea5", N: "#a86f3e", M: "#d8ab77", B: "#222222" },
+    grid: [
+      "..CCCCCCCC..",
+      ".CCCCCCCCCC.",
+      ".NNNNNNNNNN.",
+      ".NNNNNNNNNN.",
+      ".NNBNNNNBNN.",
+      ".NNNNNNNNNN.",
+      ".NNMMMMMMNN.",
+      ".NNMBBBBMNN.",
+      ".NNMMMMMMNN.",
+      "..NNNNNNNN..",
+      "...NNNNNN...",
+      "............",
+    ],
+  },
+  lion: {
+    traits: { drive: 0.40, plan: 0.30, nego: 0.30 },
+    name: "野望の王・ライオン社長候補",
+    copy: "目標は大きいほど燃える。数字と組織を牽引する、生まれながらのリーダー。",
+    palette: { M: "#c46a1b", Y: "#f7d154", F: "#e8b04b", B: "#222222", K: "#5b3a1e" },
+    grid: [
+      "..MMYYYYMM..",
+      ".MMMYYYYMMM.",
+      ".MMFFFFFFMM.",
+      ".MFFFFFFFFM.",
+      ".MFBFFFFBFM.",
+      ".MFFFFFFFFM.",
+      ".MFFFKKFFFM.",
+      ".MFFKKKKFFM.",
+      ".MMFFFFFFMM.",
+      "..MMMMMMMM..",
+      "...MMMMMM...",
+      "............",
+    ],
+  },
+};
+
+/* 回答から算出したカテゴリスコアに最もマッチするキャラクターを選定する。
+   マッチ度 = Σ(キャラのtraits重み × 応募者のカテゴリスコア)。
+   スコアが高いカテゴリの組み合わせがそのままキャラ選定に反映される。 */
+function pickCharacter(catScores) {
+  let bestKey = null, bestScore = -1;
+  Object.keys(CHARACTERS).forEach(key => {
+    const traits = CHARACTERS[key].traits;
+    let s = 0;
+    Object.keys(traits).forEach(cat => { s += catScores[cat] * traits[cat]; });
+    if (s > bestScore) { bestScore = s; bestKey = key; }
+  });
+  return { key: bestKey, ...CHARACTERS[bestKey] };
+}
+
+/* キャラ選定の根拠として表示する、traitsの重み上位2カテゴリ名 */
+function characterBasis(chara) {
+  return Object.keys(chara.traits)
+    .sort((a, b) => chara.traits[b] - chara.traits[a])
+    .slice(0, 2)
+    .map(cat => CATEGORIES[cat]);
+}
+
+/* ============================================================
+   ▼ カテゴリ別の詳細コメント（3段階。すべて建設的な表現で記述）
+   strong: スコア75以上 / stable: 60〜74 / grow: 60未満
+   ============================================================ */
+const CATEGORY_COMMENTS = {
+  stress: {
+    strong: "プレッシャーのかかる場面でも安定して力を発揮できるタイプです。工期対応やクレーム対応でも頼りにされそうです。",
+    stable: "多くの場面で落ち着いて対応できます。負荷が続くときは周囲との分担を意識するとさらに安定します。",
+    grow:   "物事を丁寧に受け止める感受性の表れです。安心して相談できる環境で、持ち味を発揮しやすくなります。",
+  },
+  nego: {
+    strong: "利害の異なる相手との調整力が強みです。施工業者との折衝や価格交渉での活躍が期待できます。",
+    stable: "相手に応じた折衝ができています。場数を重ねることで交渉の引き出しがさらに増えていきます。",
+    grow:   "聞き役としての丁寧さが持ち味です。信頼関係を土台にじっくり進める折衝スタイルが向いています。",
+  },
+  acc: {
+    strong: "数字や書類を正確に扱う力が際立っています。契約書チェックや金銭管理で強みを発揮できます。",
+    stable: "実務に必要な正確さを備えています。確認のチェックリスト化で、さらに安定感が増します。",
+    grow:   "細部より全体を大きく捉える視点の表れです。ダブルチェックの仕組みと組み合わせると効果的です。",
+  },
+  team: {
+    strong: "誠実な報告・連携の姿勢はチームの信頼の土台になります。部署間連携の要として活躍できそうです。",
+    stable: "協調性と自立性のバランスが取れています。役割分担が明確な環境で力を発揮しやすいタイプです。",
+    grow:   "自分のペースで深く取り組む集中型です。個人の裁量が大きい業務との相性が良いでしょう。",
+  },
+  adapt: {
+    strong: "段取り力と頭の切り替えの速さが強みです。工程管理や複数案件の並行処理に向いています。",
+    stable: "計画性と柔軟性を状況に応じて使い分けられます。経験とともに段取りの精度が上がっていきます。",
+    grow:   "一つのことを着実に進める堅実さの表れです。定型度の高い業務で安定した力を発揮できます。",
+  },
+  drive: {
+    strong: "目標に向かって自走できる推進力が際立っています。仕入れ・販売の数字を追う環境で輝けそうです。",
+    stable: "目標達成への意欲を安定して持てています。成功体験を重ねることでさらに加速していくタイプです。",
+    grow:   "着実さを大切にする姿勢の表れです。プロセスが明確な業務で、コツコツと成果を積み上げられます。",
+  },
+  create: {
+    strong: "空間やデザインへの感度が高く、発想力が強みです。リノベーションの企画・デザインで活躍が期待できます。",
+    stable: "実務とアイデアのバランスが取れています。良い事例に多く触れることで感性がさらに磨かれます。",
+    grow:   "決められたものを正確に形にする実直さの表れです。仕組みが整った業務との相性が良いでしょう。",
+  },
+  empathy: {
+    strong: "相手の気持ちを汲み取る力が際立っています。事情を抱えたお客様への対応や社内調整で信頼を集めそうです。",
+    stable: "場面に応じて聞き役に回れるバランス型です。経験とともに対応の引き出しが増えていきます。",
+    grow:   "論理や事実を大切にする姿勢の表れです。数字や根拠で語る業務で持ち味を発揮できます。",
+  },
+  plan: {
+    strong: "情報を構造化して伝える力が強みです。経営企画・人事・広報など「会社をつくる」仕事に向いています。",
+    stable: "分析と実行のバランスが取れています。資料づくりや改善提案の経験を重ねると強みに育ちます。",
+    grow:   "考えるより動くフットワークの表れです。現場での実践を通じて学ぶスタイルが合っています。",
+  },
+  learn: {
+    strong: "旺盛な学習意欲と挑戦心が際立っています。若手に大きな裁量を任せる社風との相性が抜群です。",
+    stable: "必要な学びを着実に積み重ねられるタイプです。目標が明確なほど成長速度が上がります。",
+    grow:   "今できることを確実にやり切る堅実さの表れです。習熟を深める働き方で安定感を発揮します。",
+  },
+};
+
+/* カテゴリスコア(下限補正後) → 3段階の帯域 */
+function catBand(score) {
+  if (score >= 75) return { key: "strong", label: "強み",     cls: "band-strong" };
+  if (score >= 60) return { key: "stable", label: "安定",     cls: "band-stable" };
+  return               { key: "grow",   label: "伸びしろ", cls: "band-grow" };
+}
+
+/* ============================================================
+   ▼ 回答スタイル分析（生の回答値から算出。面接での対話の参考情報）
+   ============================================================ */
+const ANSWER_STYLE_METRICS = [
+  {
+    name: "自己評価の傾向",
+    desc: "回答全体の平均値",
+    calc: (ans) => ans.reduce((a, b) => a + b, 0) / ans.length,
+    format: (v) => v.toFixed(1) + " / 5.0",
+    judge: (v) => v >= 3.8
+      ? "自分の強みを前向きに捉えるタイプ。面接では具体的なエピソードを聞くと人物像が立体的になります。"
+      : v >= 3.0
+      ? "バランスの取れた自己認識です。強み・課題の両面を客観的に語れる可能性が高いでしょう。"
+      : "謙虚で慎重な自己評価のタイプ。実際の力は自己申告より高いことが多く、実績ベースの質問が有効です。",
+  },
+  {
+    name: "回答のメリハリ",
+    desc: "回答値のばらつき（標準偏差）",
+    calc: (ans) => {
+      const m = ans.reduce((a, b) => a + b, 0) / ans.length;
+      return Math.sqrt(ans.reduce((a, b) => a + (b - m) ** 2, 0) / ans.length);
+    },
+    format: (v) => v.toFixed(2),
+    judge: (v) => v >= 1.1
+      ? "質問ごとに明確に判断を分けており、自己分析がはっきりしているタイプです。"
+      : v >= 0.6
+      ? "適度なメリハリのある回答スタイルです。得意・不得意の自己認識が概ね整理されています。"
+      : "回答が一定の範囲に集まっています。得意分野を面接で深掘りすると、より特徴が見えてきます。",
+  },
+  {
+    name: "判断の明確さ",
+    desc: "「どちらともいえない」を選んだ割合",
+    calc: (ans) => (ans.filter(a => a === 3).length / ans.length) * 100,
+    format: (v) => Math.round(v) + " %",
+    judge: (v) => v < 20
+      ? "自己認識が明確で、自分の得意・不得意をはっきり把握しているタイプです。"
+      : v < 40
+      ? "場面によって慎重に判断するタイプです。迷った項目を面接で聞くと対話が深まります。"
+      : "熟考しながら回答したことがうかがえます。ご本人の言葉で補足してもらうと理解が深まります。",
+  },
+];
+
+/* 4軸セレクター用の説明 */
+const AXES = [
+  { key: 0, name: "エネルギーの向き", options: [
+    { letter: "E", desc: "人と関わって energized。外向型" },
+    { letter: "I", desc: "一人の時間で充電。内向型" } ] },
+  { key: 1, name: "ものの見方", options: [
+    { letter: "S", desc: "事実・経験を重視。感覚型" },
+    { letter: "N", desc: "直観・可能性を重視。直観型" } ] },
+  { key: 2, name: "判断のしかた", options: [
+    { letter: "T", desc: "論理・筋道で判断。思考型" },
+    { letter: "F", desc: "気持ち・調和で判断。感情型" } ] },
+  { key: 3, name: "外界への接し方", options: [
+    { letter: "J", desc: "計画的に進めたい。判断型" },
+    { letter: "P", desc: "柔軟に対応したい。知覚型" } ] },
+];
+
+const ALL_TYPES = Object.keys(TYPE_PROFILES);
+
+const DISCLAIMER_TEXT = "本診断は応募者ご自身の自己理解と、面接での対話のきっかけづくりを目的とした参考情報です。MBTIおよび本診断の結果は、採用の合否や特定部署への配属を決定するものではありません。性格タイプに優劣はなく、結果によって不利益な取り扱いを受けることはありません。回答内容はこのブラウザ内でのみ処理され、外部に送信されることはありません（回答中の一時データも結果表示の時点で自動削除されます）。";
+
+/* ============================================================
+   ▼ スコアリングロジック
+   ============================================================ */
+
+/* 素点0-100を SCORE_FLOOR-100 に圧縮（極端な低スコアを出さない） */
+function applyFloor(score) {
+  return Math.round(SCORE_FLOOR + (score / 100) * (100 - SCORE_FLOOR));
+}
+
+/* カテゴリごとの正規化スコア(0-100)を算出。逆転項目は 6-回答値 で反転 */
+function calcCategoryScores(questions, answers) {
+  const sum = {}, max = {};
+  questions.forEach((q, i) => {
+    const raw = q.rev ? 6 - answers[i] : answers[i];
+    sum[q.cat] = (sum[q.cat] || 0) + (raw - 1); // 1-5 → 0-4 に変換して正規化
+    max[q.cat] = (max[q.cat] || 0) + 4;
+  });
+  const scores = {};
+  Object.keys(CATEGORIES).forEach(cat => {
+    scores[cat] = max[cat] ? (sum[cat] / max[cat]) * 100 : 50;
+  });
+  return scores;
+}
+
+/* 部署別スコア = 回答(ANSWER_RATIO) + タイプ補正(1-ANSWER_RATIO) → 下限底上げ */
+function calcDeptScores(catScores, type) {
+  const result = {};
+  Object.keys(DEPT_WEIGHTS).forEach(dept => {
+    const w = DEPT_WEIGHTS[dept];
+    let answerScore = 0;
+    Object.keys(w).forEach(cat => { answerScore += catScores[cat] * w[cat]; });
+    const mixed = answerScore * ANSWER_RATIO + TYPE_BONUS[type][dept] * (1 - ANSWER_RATIO);
+    result[dept] = applyFloor(mixed);
+  });
+  return result;
+}
+
+/* カルチャーフィット度 = カテゴリスコアの重み付き平均 → 下限底上げ */
+function calcCultureFit(catScores) {
+  let total = 0;
+  Object.keys(CULTURE_WEIGHTS).forEach(cat => {
+    total += catScores[cat] * CULTURE_WEIGHTS[cat];
+  });
+  return applyFloor(total);
+}
+
+function fitComment(score) {
+  if (score >= 80) return "三条工務店が大切にする「誠実さ・チーム連携・お客様対応」との親和性がとても高い結果です。あなたの持ち味を、面接でぜひ具体的なエピソードとともにお聞かせください。";
+  if (score >= 65) return "当社のカルチャーと良い相性が期待できる結果です。特にスコアの高かった側面は、入社後すぐに活きる強みになりそうです。";
+  return "あなたならではの持ち味が見える結果です。スコアはあくまで現時点の自己認識であり、環境や経験で大きく変わります。面接では、あなたが力を発揮しやすい場面について一緒にお話しできれば幸いです。";
+}
+
+function deptComment(dept, score, isBest) {
+  const base = {
+    eigyo: score >= 70
+      ? "目標達成意欲と折衝力のバランスが良く、仕入れ（買取）から販売まで顧客と向き合う最前線での活躍が期待できます。"
+      : "お客様と信頼関係を築きながら、じっくり営業力を伸ばしていける素地があります。",
+    koumu: score >= 70
+      ? "段取り力とストレス耐性が高く、工程管理や施工業者との折衝で力を発揮できそうです。"
+      : "経験を積むことで、工期を守り抜く工程管理の面白さを実感していけるポテンシャルがあります。",
+    design: score >= 70
+      ? "創造性と空間への感度が高く、中古物件に新しい価値を吹き込むデザインで活躍できそうです。"
+      : "数多くの実物件に触れながら、デザインの引き出しを増やしていける環境が合っています。",
+    zaimu: score >= 70
+      ? "数字への正確性と分析力が強みです。金銭処理や資金管理で会社の土台を支える存在になれそうです。"
+      : "丁寧に取り組む姿勢を活かし、実務経験とともに数字の管理力を磨いていけるでしょう。",
+    keiyaku: score >= 70
+      ? "正確な書類処理と誠実な連携姿勢が光ります。契約手続きや部署間調整で頼れる事務の要になれそうです。"
+      : "着実に取り組む姿勢を土台に、書類実務と社内連携の経験を積み重ねていけるでしょう。",
+    kikaku: score >= 70
+      ? "分析力と全体を見る視点があり、急成長する組織の戦略・仕組みづくりで力を発揮できそうです。"
+      : "現場経験を重ねることで、会社づくりへの視点を育てていけるポテンシャルがあります。",
+    jinji: score >= 70
+      ? "人への共感力と発信力を併せ持ち、採用・育成・広報で「会社の顔」として活躍できそうです。"
+      : "人に誠実に向き合う姿勢を活かし、組織づくりの経験を積んでいける素地があります。",
+  };
+  return (isBest ? "【最も適性が高い部署】" : "") + base[dept];
+}
+
+/* ============================================================
+   ▼ UIコンポーネント
+   ============================================================ */
+
+/* --- ドット絵スプライト描画（CHARACTERSのgrid+paletteをSVGで描画） --- */
+function PixelSprite({ grid, palette, size }) {
+  const rects = [];
+  grid.forEach((row, y) => {
+    [...row].forEach((ch, x) => {
+      if (ch !== ".") rects.push(
+        <rect key={x + "-" + y} x={x} y={y} width="1" height="1" fill={palette[ch]} />
+      );
+    });
+  });
+  return (
+    <svg viewBox={`0 0 ${grid[0].length} ${grid.length}`} width={size} height={size}
+      shapeRendering="crispEdges" aria-hidden="true" style={{display: "block", margin: "0 auto"}}>
+      {rects}
+    </svg>
+  );
+}
+
+/* ============================================================
+   ▼ イラスト調キャラクター（手描き風のゆるいSVGイラスト）
+   丸いからだ＋シンプルな顔＋動物ごとの特徴パーツで16種を描き分ける。
+   ※CHARACTERSのgrid/palette（ドット絵）はレトロ版デザイン用に残している。
+   ============================================================ */
+const OL = "#2b2b2b"; // 手描き風の輪郭色
+
+/* 共通のからだ（たまご型のブロブ） */
+const BLOB = "M60 18 C85 18 101 39 101 65 C101 92 83 107 60 107 C37 107 19 92 19 65 C19 39 35 18 60 18 Z";
+
+/* 共通の顔パーツ（目・鼻・口・ほっぺ） */
+function CFace({ ex = 13, ey = 58, mouthY = 72, mouth = true, nose = null, blush = true }) {
+  return (
+    <g>
+      <circle cx={60 - ex} cy={ey} r="3.5" fill={OL} />
+      <circle cx={60 + ex} cy={ey} r="3.5" fill={OL} />
+      {nose && <circle cx="60" cy={mouthY - 5} r="3" fill={nose} />}
+      {mouth && (
+        <path d={`M54 ${mouthY} Q60 ${mouthY + 5} 66 ${mouthY}`} fill="none"
+          stroke={OL} strokeWidth="2.6" strokeLinecap="round" />
+      )}
+      {blush && (
+        <g fill="#f2a9a2" opacity="0.8">
+          <circle cx={60 - ex - 13} cy={ey + 12} r="5" />
+          <circle cx={60 + ex + 13} cy={ey + 12} r="5" />
+        </g>
+      )}
+    </g>
+  );
+}
+
+const CHARA_ART = {
+  /* カメ金庫番: 深緑の甲羅＋薄緑の顔 */
+  kame: (
+    <g>
+      <g stroke={OL} strokeWidth="3">
+        <path d={BLOB} fill="#639b60" />
+        <circle cx="60" cy="65" r="33" fill="#b9dba4" />
+      </g>
+      <CFace ex={11} ey={60} mouthY={71} />
+    </g>
+  ),
+  /* ポチ主任: 垂れ耳＋赤い首輪 */
+  pochi: (
+    <g>
+      <g stroke={OL} strokeWidth="3">
+        <path d="M24 34 Q10 60 22 74 Q34 78 36 58 Q37 40 24 34 Z" fill="#a9743f" />
+        <path d="M96 34 Q110 60 98 74 Q86 78 84 58 Q83 40 96 34 Z" fill="#a9743f" />
+        <path d={BLOB} fill="#e6c08b" />
+        <ellipse cx="60" cy="77" rx="17" ry="12" fill="#fdf8ec" />
+        <path d="M36 97 Q60 107 84 97" fill="none" stroke="#d95f52" strokeWidth="7" strokeLinecap="round" />
+      </g>
+      <CFace ex={14} ey={59} mouthY={78} nose={OL} />
+    </g>
+  ),
+  /* フクロウ和尚: 耳羽＋大きな目＋くちばし */
+  fukurou: (
+    <g>
+      <g stroke={OL} strokeWidth="3">
+        <path d="M30 26 L36 8 L46 22 Z" fill="#b08b5e" />
+        <path d="M90 26 L84 8 L74 22 Z" fill="#b08b5e" />
+        <path d={BLOB} fill="#b08b5e" />
+        <circle cx="46" cy="57" r="12" fill="#fdf8ec" />
+        <circle cx="74" cy="57" r="12" fill="#fdf8ec" />
+        <path d="M53 69 L60 80 L67 69 Z" fill="#eec34f" />
+        <path d="M38 92 Q60 100 82 92" fill="none" strokeWidth="2.5" />
+      </g>
+      <circle cx="46" cy="57" r="4.4" fill={OL} />
+      <circle cx="74" cy="57" r="4.4" fill={OL} />
+      <g fill="#f2a9a2" opacity="0.8">
+        <circle cx="30" cy="73" r="5" /><circle cx="90" cy="73" r="5" />
+      </g>
+    </g>
+  ),
+  /* クロネコ参謀: とがり耳＋金の目＋ひげ */
+  kuroneko: (
+    <g>
+      <g stroke={OL} strokeWidth="3">
+        <path d="M28 34 L32 8 L48 24 Z" fill="#565c6e" />
+        <path d="M92 34 L88 8 L72 24 Z" fill="#565c6e" />
+        <path d={BLOB} fill="#565c6e" />
+      </g>
+      <circle cx="47" cy="58" r="5.5" fill="#f4d35e" /><circle cx="47" cy="58" r="2.4" fill={OL} />
+      <circle cx="73" cy="58" r="5.5" fill="#f4d35e" /><circle cx="73" cy="58" r="2.4" fill={OL} />
+      <path d="M57 69 L63 69 L60 73 Z" fill="#f2a9a2" />
+      <path d="M54 78 Q60 83 66 78" fill="none" stroke={OL} strokeWidth="2.6" strokeLinecap="round" />
+      <g stroke={OL} strokeWidth="2" strokeLinecap="round">
+        <path d="M20 62 L33 64" /><path d="M20 72 L33 69" />
+        <path d="M100 62 L87 64" /><path d="M100 72 L87 69" />
+      </g>
+    </g>
+  ),
+  /* ビーバー棟梁: 黄色ヘルメット＋前歯 */
+  beaver: (
+    <g>
+      <g stroke={OL} strokeWidth="3">
+        <path d={BLOB} fill="#a97c50" />
+        <ellipse cx="60" cy="76" rx="16" ry="12" fill="#c99e6f" />
+        <path d="M36 30 a24 20 0 0 1 48 0 Z" fill="#f4d35e" />
+        <rect x="28" y="28" width="64" height="9" rx="4.5" fill="#f4d35e" />
+        <rect x="53" y="72" width="14" height="12" rx="2.5" fill="#fdf8ec" />
+      </g>
+      <line x1="60" y1="73" x2="60" y2="83" stroke={OL} strokeWidth="2" />
+      <CFace ex={14} ey={56} mouthY={72} mouth={false} nose={OL} />
+    </g>
+  ),
+  /* アトリエうさぎ: 長い耳＋コーラルのベレー帽 */
+  usagi: (
+    <g>
+      <g stroke={OL} strokeWidth="3">
+        <rect x="34" y="2" width="16" height="38" rx="8" fill="#fdf8ec" />
+        <rect x="70" y="2" width="16" height="38" rx="8" fill="#fdf8ec" />
+        <rect x="39" y="8" width="6" height="24" rx="3" fill="#f2b1ac" stroke="none" />
+        <rect x="75" y="8" width="6" height="24" rx="3" fill="#f2b1ac" stroke="none" />
+        <path d={BLOB} fill="#fdf8ec" />
+        <circle cx="40" cy="27" r="11" fill="#e0716a" />
+      </g>
+      <CFace ex={12} ey={58} mouthY={70} nose="#f2a9a2" />
+    </g>
+  ),
+  /* ふわふわ羊: もこもこ＋タンの顔 */
+  hitsuji: (
+    <g>
+      <g stroke={OL} strokeWidth="3">
+        <g fill="#f3ecd7">
+          <circle cx="34" cy="34" r="13" /><circle cx="49" cy="24" r="13" />
+          <circle cx="66" cy="22" r="13" /><circle cx="82" cy="30" r="13" />
+        </g>
+        <path d={BLOB} fill="#f3ecd7" />
+        <ellipse cx="24" cy="56" rx="9" ry="6" fill="#e0b184" transform="rotate(-18 24 56)" />
+        <ellipse cx="96" cy="56" rx="9" ry="6" fill="#e0b184" transform="rotate(18 96 56)" />
+        <ellipse cx="60" cy="68" rx="26" ry="23" fill="#e8bd8d" />
+      </g>
+      <CFace ex={11} ey={62} mouthY={74} />
+    </g>
+  ),
+  /* ペンギン博士: 白いおなか＋丸メガネ */
+  penguin: (
+    <g>
+      <g stroke={OL} strokeWidth="3">
+        <path d={BLOB} fill="#5b6880" />
+        <ellipse cx="60" cy="79" rx="27" ry="24" fill="#fdf8ec" />
+        <path d="M52 64 Q60 72 68 64 Q60 57 52 64 Z" fill="#eec34f" />
+      </g>
+      <g fill="rgba(255,255,255,0.55)" stroke={OL} strokeWidth="2.6">
+        <circle cx="45" cy="54" r="9.5" />
+        <circle cx="75" cy="54" r="9.5" />
+      </g>
+      <line x1="54.5" y1="54" x2="65.5" y2="54" stroke={OL} strokeWidth="2.6" />
+      <circle cx="45" cy="54" r="3.4" fill={OL} />
+      <circle cx="75" cy="54" r="3.4" fill={OL} />
+    </g>
+  ),
+  /* ハヤブサ営業: キリッと眉＋赤スカーフ */
+  hayabusa: (
+    <g>
+      <g stroke={OL} strokeWidth="3">
+        <path d={BLOB} fill="#93aec4" />
+        <path d="M50 60 Q60 52 70 60 L60 72 Z" fill="#eec34f" />
+        <path d="M34 96 Q60 106 86 96" fill="none" stroke="#d95f52" strokeWidth="7" strokeLinecap="round" />
+      </g>
+      <g stroke={OL} strokeWidth="3" strokeLinecap="round">
+        <path d="M38 47 L50 51" /><path d="M82 47 L70 51" />
+      </g>
+      <circle cx="46" cy="56" r="3.5" fill={OL} />
+      <circle cx="74" cy="56" r="3.5" fill={OL} />
+      <g fill="#f2a9a2" opacity="0.8">
+        <circle cx="31" cy="68" r="5" /><circle cx="89" cy="68" r="5" />
+      </g>
+    </g>
+  ),
+  /* ごきげんインコ: 頭の羽＋オレンジのくちばし */
+  inko: (
+    <g>
+      <g stroke={OL} strokeWidth="3">
+        <path d="M60 18 Q54 6 44 8" fill="none" strokeLinecap="round" />
+        <circle cx="43" cy="8" r="4.5" fill="#7fbf7a" />
+        <path d={BLOB} fill="#7fbf7a" />
+        <path d="M52 60 Q60 54 68 60 Q60 74 52 60 Z" fill="#e8996a" />
+      </g>
+      <circle cx="45" cy="55" r="3.5" fill={OL} />
+      <circle cx="75" cy="55" r="3.5" fill={OL} />
+      <g fill="#f2a9a2" opacity="0.9">
+        <circle cx="31" cy="66" r="6.5" /><circle cx="89" cy="66" r="6.5" />
+      </g>
+    </g>
+  ),
+  /* アイデアリス: 大きなしっぽ＋まるい耳 */
+  risu: (
+    <g>
+      <g stroke={OL} strokeWidth="3">
+        <path d="M86 92 Q112 80 108 50 Q104 28 84 26 Q98 44 90 64 Q84 78 76 84 Z" fill="#c98a54" />
+        <circle cx="34" cy="26" r="10" fill="#e0a56e" />
+        <circle cx="86" cy="26" r="10" fill="#e0a56e" />
+        <path d={BLOB} fill="#e0a56e" />
+        <ellipse cx="60" cy="76" rx="15" ry="11" fill="#f6dfc0" />
+      </g>
+      <CFace ex={14} ey={58} mouthY={77} nose={OL} />
+    </g>
+  ),
+  /* キツネ軍略家: 大きなとがり耳＋白いマズル */
+  kitsune: (
+    <g>
+      <g stroke={OL} strokeWidth="3">
+        <path d="M24 40 L26 8 L48 24 Z" fill="#e8996a" />
+        <path d="M96 40 L94 8 L72 24 Z" fill="#e8996a" />
+        <path d={BLOB} fill="#e8996a" />
+        <ellipse cx="60" cy="80" rx="22" ry="15" fill="#fdf8ec" />
+      </g>
+      <CFace ex={14} ey={58} mouthY={82} nose={OL} />
+    </g>
+  ),
+  /* ゴリラ現場監督: 黄色ヘルメット＋グレーの顔 */
+  gorilla: (
+    <g>
+      <g stroke={OL} strokeWidth="3">
+        <path d={BLOB} fill="#787f87" />
+        <ellipse cx="60" cy="72" rx="27" ry="22" fill="#a7adb4" />
+        <path d="M36 32 a24 20 0 0 1 48 0 Z" fill="#f4d35e" />
+        <rect x="28" y="30" width="64" height="9" rx="4.5" fill="#f4d35e" />
+      </g>
+      <g stroke={OL} strokeWidth="3" strokeLinecap="round">
+        <path d="M46 52 L56 52" /><path d="M64 52 L74 52" />
+      </g>
+      <CFace ex={12} ey={61} mouthY={81} nose={OL} blush={false} />
+    </g>
+  ),
+  /* きくばりパンダ: 黒耳＋アイパッチ＋赤い蝶ネクタイ */
+  panda: (
+    <g>
+      <g stroke={OL} strokeWidth="3">
+        <circle cx="30" cy="26" r="12" fill="#3a3a3a" />
+        <circle cx="90" cy="26" r="12" fill="#3a3a3a" />
+        <path d={BLOB} fill="#fdf8ec" />
+        <path d="M46 92 L58 98 L46 104 Z" fill="#d95f52" />
+        <path d="M74 92 L62 98 L74 104 Z" fill="#d95f52" />
+        <circle cx="60" cy="98" r="4" fill="#d95f52" />
+      </g>
+      <ellipse cx="45" cy="57" rx="9" ry="11" fill="#3a3a3a" transform="rotate(-12 45 57)" />
+      <ellipse cx="75" cy="57" rx="9" ry="11" fill="#3a3a3a" transform="rotate(12 75 57)" />
+      <circle cx="45" cy="56" r="3.2" fill="#fff" />
+      <circle cx="75" cy="56" r="3.2" fill="#fff" />
+      <circle cx="60" cy="70" r="3" fill={OL} />
+      <path d="M54 76 Q60 81 66 76" fill="none" stroke={OL} strokeWidth="2.6" strokeLinecap="round" />
+    </g>
+  ),
+  /* コーチ熊: まる耳＋青いキャップ */
+  kuma: (
+    <g>
+      <g stroke={OL} strokeWidth="3">
+        <circle cx="30" cy="28" r="11" fill="#a97c50" />
+        <circle cx="90" cy="28" r="11" fill="#a97c50" />
+        <path d={BLOB} fill="#a97c50" />
+        <ellipse cx="60" cy="76" rx="16" ry="12" fill="#d9b285" />
+        <path d="M38 32 a22 18 0 0 1 44 0 Z" fill="#5b8bbd" />
+        <rect x="56" y="27" width="34" height="8" rx="4" fill="#5b8bbd" />
+      </g>
+      <CFace ex={14} ey={58} mouthY={78} nose={OL} />
+    </g>
+  ),
+  /* ライオン社長候補: たてがみ＋王冠 */
+  lion: (
+    <g>
+      <g stroke={OL} strokeWidth="3">
+        <g fill="#d98a4b">
+          <circle cx="26" cy="42" r="13" /><circle cx="20" cy="66" r="13" />
+          <circle cx="26" cy="88" r="13" /><circle cx="94" cy="42" r="13" />
+          <circle cx="100" cy="66" r="13" /><circle cx="94" cy="88" r="13" />
+          <circle cx="40" cy="24" r="13" /><circle cx="60" cy="17" r="13" /><circle cx="80" cy="24" r="13" />
+        </g>
+        <path d={BLOB} fill="#e6b566" />
+        <ellipse cx="60" cy="76" rx="16" ry="12" fill="#f2d8a8" />
+        <path d="M48 18 L52 5 L58 13 L60 3 L62 13 L68 5 L72 18 Z" fill="#f4d35e" />
+      </g>
+      <CFace ex={14} ey={58} mouthY={78} nose={OL} />
+    </g>
+  ),
+};
+
+/* --- イラスト調キャラクターの描画コンポーネント --- */
+function CharaSprite({ chara, size }) {
+  return (
+    <svg viewBox="0 0 120 120" width={size} height={size} aria-hidden="true"
+      style={{ display: "block", margin: "0 auto", overflow: "visible" }}
+      strokeLinejoin="round" strokeLinecap="round">
+      {CHARA_ART[chara]}
+    </svg>
+  );
+}
+
+/* --- カウントアップ演出（結果画面のスコア表示用） --- */
+function useCountUp(target, duration = 1100) {
+  const [val, setVal] = useState(0);
+  useEffect(() => {
+    let start = null, raf;
+    const step = (t) => {
+      if (start === null) start = t;
+      const p = Math.min((t - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - p, 3); // ease-out cubic
+      setVal(Math.round(target * eased));
+      if (p < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    /* 非表示タブなどでrAFが動かない場合の保険: 最終値を必ず反映する */
+    const fallback = setTimeout(() => setVal(target), duration + 400);
+    return () => { cancelAnimationFrame(raf); clearTimeout(fallback); };
+  }, [target, duration]);
+  return val;
+}
+
+/* --- カルチャーフィット度の円形ゲージ（カウントアップと同期して弧が伸びる） --- */
+function FitGauge({ score }) {
+  const val = useCountUp(score);
+  const R = 84;
+  const C = 2 * Math.PI * R;
+  return (
+    <div className="fit-ring-wrap" role="img"
+      aria-label={`カルチャーフィット度 ${score}パーセント`}>
+      <svg className="fit-ring" viewBox="0 0 200 200" aria-hidden="true">
+        <defs>
+          <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#7c5a38" />
+            <stop offset="100%" stopColor="#b3906a" />
+          </linearGradient>
+        </defs>
+        <circle className="ring-bg" cx="100" cy="100" r={R} />
+        <circle className="ring-fg" cx="100" cy="100" r={R}
+          stroke="url(#ringGrad)"
+          strokeDasharray={C}
+          strokeDashoffset={C * (1 - val / 100)} />
+      </svg>
+      <div className="fit-ring-center" aria-hidden="true">
+        <span className="num">{val}</span><span className="unit">%</span>
+      </div>
+    </div>
+  );
+}
+
+/* --- セクション見出し（英字＋日本語＋波線。カードの外に置く） --- */
+function SectionTitle({ en, ja }) {
+  return (
+    <div className="section-title">
+      <span className="en">{en}</span>
+      <span className="ja">{ja}</span>
+    </div>
+  );
+}
+
+/* --- 固定トップバー（左ロゴ＋右に現在ステップ。ヒーロー上では色反転） --- */
+function Topbar({ screen }) {
+  const stepLabel = {
+    type: "01 — SELECT TYPE",
+    quiz: "02 — QUESTIONS",
+    result: "03 — RESULT",
+  }[screen];
+  return (
+    <header className={"topbar" + (screen === "top" ? " on-dark" : "")}>
+      <div className="topbar-logo">
+        <span className="en">SANJO KOMUTEN</span>
+        <strong>三条工務店</strong>
+      </div>
+      {stepLabel && <span className="topbar-step">{stepLabel}</span>}
+    </header>
+  );
+}
+
+/* --- 画面1: トップ（フルブリードのセクション構成） --- */
+function TopScreen({ onStart, savedProgress, onResume }) {
+  return (
+    <div className="screen">
+      {/* フルスクリーンのダークヒーロー */}
+      <section className="hero-full">
+        <p className="hero-eyebrow">SANJO KOMUTEN RECRUITING</p>
+        <h1>わたしに、<br />ちょうどいい仕事。</h1>
+        <p className="hero-lead">ビジネス適性診断</p>
+        <div className="scroll-cue" aria-hidden="true"><span>SCROLL</span></div>
+      </section>
+
+      {/* About: 見出し＋本文の2カラム */}
+      <section className="sec sec-about">
+        <div className="inner about-grid">
+          <div>
+            <span className="sec-label">About</span>
+            <h2 className="sec-heading">この診断について</h2>
+          </div>
+          <div className="about-body">
+            <p>
+              ご自身のMBTIタイプと、仕事に関する76の質問への回答から、
+              三条工務店とのカルチャーフィット度と、7つの部門
+              （営業・工務・空間デザイナー・財務経理・契約管理・経営企画・人事広報）
+              への適性傾向を診断する参考ツールです。
+              結果は合否を決めるものではなく、あなたの持ち味を
+              面接での対話につなげるための材料です。
+            </p>
+            <ul className="about-facts">
+              <li><span className="en">TIME</span>所要時間の目安 約25〜30分</li>
+              <li><span className="en">FORMAT</span>MBTIタイプの選択＋76問（5段階評価）</li>
+              <li><span className="en">RESULT</span>フィット度・部署別適性・あなたのキャラクターをその場で表示</li>
+              <li><span className="en">PRIVACY</span>回答はブラウザ内でのみ処理され、外部に送信されません</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      {/* Flow: 番号つき4ステップ */}
+      <section className="sec sec-flow">
+        <div className="inner">
+          <span className="sec-label">Flow</span>
+          <h2 className="sec-heading">診断のながれ</h2>
+          <ol className="flow-grid">
+            <li>
+              <span className="num">01</span>
+              <h3>タイプを選ぶ</h3>
+              <p>MBTIタイプを16タイプの一覧、または4つの軸から選択します。</p>
+            </li>
+            <li>
+              <span className="num">02</span>
+              <h3>76問に回答する</h3>
+              <p>ビジネスに特化した質問に、5段階で直感的に答えていきます。</p>
+            </li>
+            <li>
+              <span className="num">03</span>
+              <h3>結果を見る</h3>
+              <p>カルチャーフィット度と7部門への適性が、その場で表示されます。</p>
+            </li>
+            <li>
+              <span className="num">04</span>
+              <h3>対話に活かす</h3>
+              <p>結果は印刷でき、面接での対話のきっかけとしてつかえます。</p>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      {/* Characters: 全16キャラクターの一覧 */}
+      <section className="sec sec-chars">
+        <div className="inner">
+          <span className="sec-label">Characters</span>
+          <h2 className="sec-heading">16のビジネスキャラクター</h2>
+          <p className="chars-note">
+            76問の回答から、あなたの持ち味に最も近いキャラクターがひとり選ばれます。
+          </p>
+          <ul className="chars-grid">
+            {Object.keys(CHARACTERS).map(k => {
+              const [role, nm] = CHARACTERS[k].name.split("・");
+              return (
+                <li key={k}>
+                  <div className="chars-medal"><CharaSprite chara={k} size={54} /></div>
+                  <p className="chars-name">
+                    <span className="role">{role}</span>
+                    <strong>{nm}</strong>
+                  </p>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      </section>
+
+      {/* Notice: ダークブラウンの帯 */}
+      <section className="sec sec-notice">
+        <div className="inner notice-inner">
+          <span className="sec-label">Notice</span>
+          <p>
+            本診断は合否を決めるものではなく、
+            ご自身の理解と面接での対話のきっかけづくりのための参考情報です。
+            正直に、直感でお答えいただくのが、最も有意義な結果につながります。
+          </p>
+        </div>
+      </section>
+
+      {/* CTA: 円形矢印ボタン */}
+      <section className="sec sec-cta">
+        <button className="cta-link" onClick={onStart}>
+          <span className="cta-circle" aria-hidden="true">→</span>
+          <span className="cta-text">診断をはじめる</span>
+        </button>
+        {/* リロード等で中断した回答が残っている場合のみ表示 */}
+        {savedProgress && (
+          <button className="resume-link" onClick={onResume}>
+            続きから再開する（{savedProgress.type}・{savedProgress.answers.filter(a => a !== null).length}問回答済み）
+          </button>
+        )}
+      </section>
+    </div>
+  );
+}
+
+/* --- 画面2: MBTIタイプ選択 --- */
+function TypeSelectScreen({ onDecide, applicant, setApplicant }) {
+  const [mode, setMode] = useState("axis");            // "axis" | "grid"
+  const [axisPicks, setAxisPicks] = useState([null, null, null, null]);
+  const [gridPick, setGridPick] = useState(null);
+
+  const axisType = axisPicks.every(p => p) ? axisPicks.join("") : null;
+  const selected = mode === "axis" ? axisType : gridPick;
+
+  return (
+    <div className="screen">
+      <SectionTitle en="SELECT" ja="あなたのMBTIタイプを選んでください" />
+      <div className="card">
+        {/* 応募者プロフィール（任意）: 結果画面と結果シートのヘッダーに反映される */}
+        <div className="profile-fields">
+          <label>
+            <span className="pf-label">お名前（任意）</span>
+            <input type="text" value={applicant.name}
+              onChange={e => setApplicant({ ...applicant, name: e.target.value })}
+              placeholder="例）三条 太郎" />
+          </label>
+          <label>
+            <span className="pf-label">大学名（任意）</span>
+            <input type="text" value={applicant.school}
+              onChange={e => setApplicant({ ...applicant, school: e.target.value })}
+              placeholder="例）〇〇大学 △△学部" />
+          </label>
+        </div>
+
+        <p className="sub">タイプが分かる方は「16タイプから選ぶ」、分からない方は「4つの軸から選ぶ」をご利用ください。</p>
+
+        <div className="mode-tabs" role="tablist" style={{marginTop: 16}}>
+          <button role="tab" aria-selected={mode === "axis"}
+            className={"mode-tab" + (mode === "axis" ? " active" : "")}
+            onClick={() => setMode("axis")}>4つの軸から選ぶ</button>
+          <button role="tab" aria-selected={mode === "grid"}
+            className={"mode-tab" + (mode === "grid" ? " active" : "")}
+            onClick={() => setMode("grid")}>16タイプから選ぶ</button>
+        </div>
+
+        {mode === "axis" && (
+          <div>
+            {AXES.map((axis, idx) => (
+              <div className="axis-block" key={axis.name}>
+                <div className="axis-label">{idx + 1}. {axis.name}</div>
+                <div className="axis-pair">
+                  {axis.options.map(opt => (
+                    <button key={opt.letter}
+                      className={"axis-option" + (axisPicks[idx] === opt.letter ? " selected" : "")}
+                      aria-pressed={axisPicks[idx] === opt.letter}
+                      onClick={() => setAxisPicks(prev => {
+                        /* 関数型更新: 素早い連続クリックでも選択を取りこぼさない */
+                        const next = [...prev];
+                        next[idx] = opt.letter;
+                        return next;
+                      })}>
+                      <span className="letter">{opt.letter}</span>
+                      <span className="desc"> — {opt.desc}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {mode === "grid" && (
+          <div className="type-grid" role="listbox" aria-label="16タイプ一覧">
+            {ALL_TYPES.map(t => (
+              <button key={t} role="option" aria-selected={gridPick === t}
+                className={"type-cell" + (gridPick === t ? " selected" : "")}
+                onClick={() => setGridPick(t)}>
+                <span className="code">{t}</span>
+                <span className="name">{TYPE_PROFILES[t].label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {selected && (
+          <div className="selected-type-bar">
+            <div>
+              <div className="code">{selected}</div>
+              <div className="name">{TYPE_PROFILES[selected].label}</div>
+            </div>
+            <button className="btn btn-primary" onClick={() => onDecide(selected)}>
+              このタイプで進む
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* --- 画面3: ビジネス特化質問（1問ずつ表示） --- */
+const LIKERT_LABELS = [
+  "全くあてはまらない", "あまりあてはまらない", "どちらともいえない",
+  "ややあてはまる", "非常にあてはまる",
+];
+
+function QuizScreen({ questions, answers, setAnswers, onFinish }) {
+  const [idx, setIdx] = useState(0);
+  const total = questions.length;
+  const q = questions[idx];
+  const answered = answers.filter(a => a !== null).length;
+  const allDone = answered === total;
+  const isLast = idx === total - 1;
+
+  /* 自動送りは「現在の質問の次」へ絶対値で移動する。
+     素早い連打でタイマーが2重発火しても同じ質問に着地し、質問飛ばしを防ぐ */
+  const select = (value) => {
+    setAnswers(prev => {
+      /* 関数型更新: キー連打などの連続入力でも回答を取りこぼさない */
+      const next = [...prev];
+      next[idx] = value;
+      return next;
+    });
+    if (!isLast) setTimeout(() => setIdx(Math.min(idx + 1, total - 1)), 180);
+  };
+
+  const firstUnanswered = answers.indexOf(null);
+
+  /* キーボード操作: 1〜5キーで回答、←→で前後の質問へ移動 */
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key >= "1" && e.key <= "5") select(Number(e.key));
+      else if (e.key === "ArrowLeft" && idx > 0) setIdx(idx - 1);
+      else if (e.key === "ArrowRight" && !isLast && answers[idx] !== null) setIdx(idx + 1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  return (
+    <div className="screen">
+      <div className="card">
+        <div className="progress-wrap">
+          <div className="progress-meta">
+            <span>質問 {idx + 1} / {total}</span>
+            <span>回答済み {answered} / {total}</span>
+          </div>
+          <div className="progress-track" role="progressbar"
+            aria-valuenow={answered} aria-valuemin={0} aria-valuemax={total}>
+            <div className="progress-fill" style={{ width: `${(answered / total) * 100}%` }} />
+          </div>
+        </div>
+
+        {/* key=idx でアニメーションを設問ごとに再発火させる */}
+        <div className="q-anim" key={idx}>
+          <span className="q-category">{CATEGORIES[q.cat]}</span>
+          <p className="q-text">Q{idx + 1}. {q.text}</p>
+
+          <div className="likert" role="radiogroup" aria-label="回答を選択">
+            {LIKERT_LABELS.map((label, i) => {
+              const value = i + 1;
+              const sel = answers[idx] === value;
+              return (
+                <button key={value} role="radio" aria-checked={sel}
+                  className={"likert-option" + (sel ? " selected" : "")}
+                  onClick={() => select(value)}>
+                  <span className="num">{value}</span>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <p className="kbd-hint">
+          キーボードの <kbd>1</kbd>〜<kbd>5</kbd> でも回答できます（<kbd>←</kbd> <kbd>→</kbd> で移動）
+        </p>
+
+        <div className="quiz-nav">
+          <button className="btn btn-ghost" disabled={idx === 0}
+            onClick={() => setIdx(i => i - 1)}>← 前へ</button>
+          {isLast ? (
+            <button className="btn btn-primary" disabled={!allDone} onClick={onFinish}>
+              結果を見る
+            </button>
+          ) : (
+            <button className="btn btn-ghost" disabled={answers[idx] === null}
+              onClick={() => setIdx(i => i + 1)}>次へ →</button>
+          )}
+        </div>
+
+        {/* 未回答が残っていると「結果を見る」が押せないため、該当質問へ誘導する */}
+        {isLast && !allDone && (
+          <div className="unanswered-note" role="alert">
+            未回答の質問が {total - answered} 問あります。すべて回答すると「結果を見る」が押せるようになります。
+            <button className="btn btn-primary btn-wide" style={{marginTop: 10}}
+              onClick={() => setIdx(firstUnanswered)}>
+              未回答の質問（Q{firstUnanswered + 1}）へ移動する
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* --- 結果画面のレーダーチャート（Chart.js） --- */
+function DeptRadarChart({ deptScores }) {
+  const canvasRef = useRef(null);
+  useEffect(() => {
+    const deptKeys = Object.keys(DEPT_WEIGHTS);
+    const chart = new Chart(canvasRef.current, {
+      type: "radar",
+      data: {
+        labels: deptKeys.map(k => DEPT_INFO[k].short),
+        datasets: [{
+          label: "部署別適性スコア",
+          data: deptKeys.map(k => deptScores[k]),
+          backgroundColor: "rgba(138, 106, 72, 0.14)",
+          borderColor: "#8a6a48",
+          borderWidth: 1.5,
+          pointBackgroundColor: "#453c34",
+          pointRadius: 3.5,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        scales: {
+          r: {
+            min: 0, max: 100,
+            ticks: { stepSize: 20, backdropColor: "transparent", color: "#b3a189" },
+            grid: { color: "#e5dccd" },
+            angleLines: { color: "#e5dccd" },
+            pointLabels: { font: { size: 12, family: "Noto Sans JP", weight: "500" }, color: "#433d38" },
+          },
+        },
+        plugins: { legend: { display: false } },
+      },
+    });
+    return () => chart.destroy();
+  }, [deptScores]);
+  return (
+    <div className="chart-box">
+      <canvas ref={canvasRef} aria-label="部署別適性のレーダーチャート" role="img"></canvas>
+    </div>
+  );
+}
+
+/* --- 結果画面のカテゴリ別横棒グラフ（Chart.js） --- */
+function CategoryBarChart({ catDisplay }) {
+  const canvasRef = useRef(null);
+  useEffect(() => {
+    const keys = Object.keys(CATEGORIES);
+    const chart = new Chart(canvasRef.current, {
+      type: "bar",
+      data: {
+        labels: keys.map(k => CATEGORIES[k]),
+        datasets: [{
+          label: "カテゴリスコア",
+          data: keys.map(k => catDisplay[k]),
+          backgroundColor: keys.map(k =>
+            catDisplay[k] >= 75 ? "rgba(138,106,72,0.92)" :
+            catDisplay[k] >= 60 ? "rgba(179,161,137,0.92)" : "rgba(210,198,178,0.92)"),
+          borderWidth: 0,
+          borderRadius: 2,
+          barThickness: 14,
+        }],
+      },
+      options: {
+        indexAxis: "y",
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { min: 0, max: 100, ticks: { stepSize: 20, color: "#b3a189" }, grid: { color: "#e5dccd" } },
+          y: { ticks: { font: { size: 12, family: "Noto Sans JP", weight: "500" }, color: "#433d38" }, grid: { display: false } },
+        },
+        plugins: { legend: { display: false } },
+      },
+    });
+    return () => chart.destroy();
+  }, [catDisplay]);
+  return (
+    <div style={{ height: 420 }}>
+      <canvas ref={canvasRef} aria-label="カテゴリ別スコアの横棒グラフ" role="img"></canvas>
+    </div>
+  );
+}
+
+/* --- 印刷用の静的レーダーチャート（Chart.jsを使わないSVG。印刷でも確実に描画される） --- */
+function PrintRadar({ deptScores, size = 200 }) {
+  const keys = Object.keys(DEPT_WEIGHTS);
+  const cx = 110, cy = 98, R = 58;
+  const pt = (i, r) => {
+    const a = -Math.PI / 2 + (2 * Math.PI * i) / keys.length;
+    return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+  };
+  const ring = (v) => keys.map((_, i) => pt(i, (R * v) / 100).join(",")).join(" ");
+  const data = keys.map((k, i) => pt(i, (R * deptScores[k]) / 100).join(",")).join(" ");
+  return (
+    <svg viewBox="0 0 220 190" width={size} height={(size * 190) / 220} aria-hidden="true">
+      {[20, 40, 60, 80, 100].map(v => (
+        <polygon key={v} points={ring(v)} fill="none" stroke="#e0d5c2" strokeWidth="1" />
+      ))}
+      {keys.map((_, i) => {
+        const [x, y] = pt(i, R);
+        return <line key={i} x1={cx} y1={cy} x2={x} y2={y} stroke="#e0d5c2" strokeWidth="1" />;
+      })}
+      <polygon points={data} fill="rgba(138,106,72,0.2)" stroke="#8a6a48" strokeWidth="2" strokeLinejoin="round" />
+      {keys.map((k, i) => {
+        const [x, y] = pt(i, (R * deptScores[k]) / 100);
+        return <circle key={k} cx={x} cy={y} r="2.6" fill="#4a4038" />;
+      })}
+      {keys.map((k, i) => {
+        const [x, y] = pt(i, R + 15);
+        return (
+          <text key={k} x={x} y={y + 3.5} textAnchor="middle" fontSize="10"
+            fontFamily="'Noto Sans JP', sans-serif" fill="#4a4038">{DEPT_INFO[k].short}</text>
+        );
+      })}
+    </svg>
+  );
+}
+
+/* --- 印刷用の円形フィットゲージ（静的SVG） --- */
+function PrintRing({ value, size = 92 }) {
+  const R = 40;
+  const C = 2 * Math.PI * R;
+  return (
+    <svg viewBox="0 0 100 100" width={size} height={size} aria-hidden="true">
+      <circle cx="50" cy="50" r={R} fill="none" stroke="#eee7da" strokeWidth="9" />
+      <circle cx="50" cy="50" r={R} fill="none" stroke="#8a6a48" strokeWidth="9"
+        strokeDasharray={C} strokeDashoffset={C * (1 - value / 100)}
+        transform="rotate(-90 50 50)" />
+      <text x="50" y="54" textAnchor="middle" fontSize="26"
+        fontFamily="'Shippori Mincho', serif" fontWeight="600" fill="#332e28">{value}</text>
+      <text x="50" y="68" textAnchor="middle" fontSize="9" fill="#978b7c">%</text>
+    </svg>
+  );
+}
+
+/* --- 印刷専用のA4一枚結果シート（画面では非表示。印刷時はこれだけを出力） --- */
+function PrintSheet({ type, profile, chara, cultureFit, deptScores, bestDept, catDisplay, rankedCats, topCats, growCat, answers, applicant }) {
+  const today = new Date();
+  const dateStr = `${today.getFullYear()}年${today.getMonth() + 1}月${today.getDate()}日`;
+  return (
+    <div className="print-sheet" aria-hidden="true">
+      <header className="ps-head">
+        <div>
+          <p className="ps-brand">SANJO KOMUTEN — BUSINESS APTITUDE TEST</p>
+          <p className="ps-title">三条工務店 ビジネス適性診断　結果シート</p>
+        </div>
+        <div className="ps-meta">
+          {(applicant.name || applicant.school) && (
+            <p className="ps-applicant">
+              氏名：{applicant.name || "―"}{applicant.school ? `（${applicant.school}）` : ""}
+            </p>
+          )}
+          <p>実施日：{dateStr}</p>
+          <p>MBTIタイプ：{type}（{profile.label}）</p>
+        </div>
+      </header>
+
+      {/* 1段目: キャラクター＋フィット度ゲージ */}
+      <section className="ps-main">
+        <div className="ps-chara">
+          <div className="ps-chara-art"><CharaSprite chara={chara.key} size={78} /></div>
+          <div className="ps-chara-text">
+            <p className="ps-chara-lead">あなたのビジネスキャラクター</p>
+            <p className="ps-chara-name">『{chara.name}』</p>
+            <p className="ps-chara-copy">{chara.copy}</p>
+          </div>
+        </div>
+        <div className="ps-fitbox">
+          <h2>カルチャーフィット度</h2>
+          <div className="ps-fit-flex">
+            <PrintRing value={cultureFit} />
+            <p className="ps-fit-comment">{fitComment(cultureFit)}</p>
+          </div>
+        </div>
+      </section>
+
+      {/* 2段目: レーダーチャート＋部署別バー＋最適部署コメント */}
+      <section className="ps-dept-sec">
+        <h2>部署別適性（100点満点）</h2>
+        <div className="ps-dept-flex">
+          <div className="ps-radar"><PrintRadar deptScores={deptScores} /></div>
+          <div className="ps-dept-bars">
+            {Object.keys(DEPT_WEIGHTS).map(d => (
+              <div key={d} className="ps-bar-row">
+                <span className="name">{DEPT_INFO[d].short}{d === bestDept ? " ◎" : ""}</span>
+                <span className="bar"><span className="fill" style={{ width: `${deptScores[d]}%` }} /></span>
+                <span className="score">{deptScores[d]}</span>
+              </div>
+            ))}
+            <p className="ps-best">
+              ◎ {DEPT_INFO[bestDept].name}（{deptScores[bestDept]}点）：{deptComment(bestDept, deptScores[bestDept], false)}
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* 3段目: 特性スコア */}
+      <section className="ps-cats">
+        <h2>特性スコア（10のビジネス特性・スコア順）</h2>
+        <div className="ps-cats-grid">
+          {rankedCats.map(k => (
+            <div key={k} className="ps-bar-row">
+              <span className="name">{CATEGORIES[k]}</span>
+              <span className="bar"><span className="fill" style={{ width: `${catDisplay[k]}%` }} /></span>
+              <span className="score">{catDisplay[k]}</span>
+              <span className="band">{catBand(catDisplay[k]).label}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* 4段目: 強み／伸びしろの具体コメント */}
+      <section className="ps-profile">
+        <div>
+          <h2>強み</h2>
+          {topCats.map(k => (
+            <p key={k} className="ps-point">
+              <strong>{CATEGORIES[k]}（{catDisplay[k]}点・{catBand(catDisplay[k]).label}）</strong>
+              {CATEGORY_COMMENTS[k][catBand(catDisplay[k]).key]}
+            </p>
+          ))}
+          <p className="ps-point">
+            <strong>{type}タイプの持ち味</strong>
+            {profile.strengths.join("／")}
+          </p>
+        </div>
+        <div>
+          <h2>伸びしろと活かし方</h2>
+          <p className="ps-point">
+            <strong>{CATEGORIES[growCat]}（{catDisplay[growCat]}点・{catBand(catDisplay[growCat]).label}）</strong>
+            {CATEGORY_COMMENTS[growCat][catBand(catDisplay[growCat]).key]}
+          </p>
+          <p className="ps-point">
+            <strong>チーム内での役割</strong>
+            {profile.role}
+          </p>
+        </div>
+      </section>
+
+      {/* 5段目: 回答スタイル（面接での対話のヒント） */}
+      <section className="ps-style">
+        <h2>回答スタイル（面接での対話のヒント）</h2>
+        {ANSWER_STYLE_METRICS.map(m => {
+          const v = m.calc(answers);
+          return (
+            <p key={m.name} className="ps-style-row">
+              <strong>{m.name} {m.format(v)}</strong>{m.judge(v)}
+            </p>
+          );
+        })}
+      </section>
+
+      <footer className="ps-foot">{DISCLAIMER_TEXT}</footer>
+    </div>
+  );
+}
+
+/* --- 画面4: 結果 --- */
+function ResultScreen({ type, questions, answers, applicant, onRestart }) {
+  const catScores = calcCategoryScores(questions, answers);
+  const deptScores = calcDeptScores(catScores, type);
+  const cultureFit = calcCultureFit(catScores);
+  const profile = TYPE_PROFILES[type];
+  const bestDept = Object.keys(deptScores)
+    .reduce((a, b) => (deptScores[b] > deptScores[a] ? b : a));
+  const deptOrder = Object.keys(DEPT_WEIGHTS);
+
+  /* カテゴリ別の表示用スコア（部署スコアと同じく下限底上げを適用） */
+  const catDisplay = {};
+  Object.keys(CATEGORIES).forEach(k => { catDisplay[k] = applyFloor(catScores[k]); });
+  /* スコア降順に並べたカテゴリ（表・強みチップ用） */
+  const rankedCats = Object.keys(CATEGORIES)
+    .sort((a, b) => catDisplay[b] - catDisplay[a]);
+  const topCats = rankedCats.slice(0, 2);
+  const growCat = rankedCats[rankedCats.length - 1];
+  /* 回答スコアに最もマッチするキャラクターを選定 */
+  const chara = pickCharacter(catScores);
+
+  return (
+    <div className="screen has-print-sheet">
+      {/* 印刷時はこのA4一枚シートのみ出力される */}
+      <PrintSheet type={type} profile={profile} chara={chara}
+        cultureFit={cultureFit} deptScores={deptScores} bestDept={bestDept}
+        catDisplay={catDisplay} rankedCats={rankedCats}
+        topCats={topCats} growCat={growCat} answers={answers} applicant={applicant} />
+
+      {/* (a) キャラクター＆カルチャーフィット度
+           キャラは回答から算出したカテゴリスコアとのマッチ度で選定（MBTI固定ではない） */}
+      <section className="result-sec">
+      <SectionTitle en="RESULT" ja="診断結果" />
+      <div className="card">
+        {(applicant.name || applicant.school) && (
+          <p className="result-person">
+            回答者：{applicant.name || "―"}{applicant.school ? `（${applicant.school}）` : ""}
+          </p>
+        )}
+        <div className="char-hero">
+          <div className="char-frame">
+            <CharaSprite chara={chara.key} size={140} />
+          </div>
+          <div className="char-lead">あなたの回答から見えたのは…</div>
+          <div className="char-name">『{chara.name}』</div>
+          <div className="char-type-badge">{type}（{profile.label}）</div>
+          <p className="char-copy">{chara.copy}</p>
+          <p className="char-basis">
+            選定根拠：回答から「{characterBasis(chara)[0]}」と「{characterBasis(chara)[1]}」の傾向が特に強く表れています
+          </p>
+        </div>
+        <div className="fit-gauge-wrap">
+          <p className="sub" style={{fontWeight: 700}}>三条工務店とのカルチャーフィット度</p>
+          <FitGauge score={cultureFit} />
+        </div>
+        <p className="sub">{fitComment(cultureFit)}</p>
+      </div>
+      </section>
+
+      {/* (b) 部署別適性 */}
+      <section className="result-sec">
+      <SectionTitle en="APTITUDE" ja="部署別適性" />
+      <div className="card">
+        <DeptRadarChart deptScores={deptScores} />
+        <div style={{marginTop: 18}}>
+          {deptOrder.map(dept => (
+            <div key={dept} className={"dept-row" + (dept === bestDept ? " best" : "")}>
+              <div className="dept-head">
+                <span className="dept-name">
+                  {DEPT_INFO[dept].name}
+                  {dept === bestDept && <span className="best-badge">BEST</span>}
+                </span>
+                <span className="dept-score">{deptScores[dept]}<small style={{fontSize: 12}}> /100</small></span>
+              </div>
+              <div className="dept-bar" aria-hidden="true">
+                <div className="dept-bar-fill" style={{ width: `${deptScores[dept]}%` }} />
+              </div>
+              <p className="dept-comment">
+                {deptComment(dept, deptScores[dept], dept === bestDept)} {DEPT_INFO[dept].comment}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+      </section>
+
+      {/* (b-2) カテゴリ別の特性詳細（横棒グラフ＋表） */}
+      <section className="result-sec">
+      <SectionTitle en="ANALYSIS" ja="特性の詳細分析" />
+      <div className="card">
+        <p className="sub">76問の回答を10のビジネス特性に分解したスコアです。</p>
+        <div className="strength-chips" aria-label="強みと伸びしろのサマリー">
+          {topCats.map(k => (
+            <span key={k} className="chip chip-strong">💪 強み：{CATEGORIES[k]}</span>
+          ))}
+          <span className="chip chip-grow">🌱 伸びしろ：{CATEGORIES[growCat]}</span>
+        </div>
+        <CategoryBarChart catDisplay={catDisplay} />
+        <div className="table-scroll">
+          <table className="detail-table">
+            <thead>
+              <tr>
+                <th scope="col">特性カテゴリ</th>
+                <th scope="col">スコア</th>
+                <th scope="col">評価</th>
+                <th scope="col">ワンポイント</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rankedCats.map(k => {
+                const band = catBand(catDisplay[k]);
+                return (
+                  <tr key={k}>
+                    <td style={{fontWeight: 700, color: "var(--navy)", whiteSpace: "nowrap"}}>{CATEGORIES[k]}</td>
+                    <td className="score-cell">
+                      {catDisplay[k]}
+                      <span className="mini-bar-track" aria-hidden="true">
+                        <span className="mini-bar-fill" style={{width: `${catDisplay[k]}%`, display: "block"}} />
+                      </span>
+                    </td>
+                    <td><span className={"band-badge " + band.cls}>{band.label}</span></td>
+                    <td>{CATEGORY_COMMENTS[k][band.key]}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </section>
+
+      {/* (b-3) 回答スタイル分析（面接での対話の参考情報） */}
+      <section className="result-sec">
+      <SectionTitle en="STYLE" ja="回答スタイルの傾向" />
+      <div className="card">
+        <p className="sub">スコアとは別に、回答のしかたそのものから見える傾向です。優劣ではなく、面接での対話のヒントとしてご覧ください。</p>
+        <div className="table-scroll" style={{marginTop: 10}}>
+          <table className="detail-table">
+            <thead>
+              <tr>
+                <th scope="col">指標</th>
+                <th scope="col">値</th>
+                <th scope="col">読み取れる傾向</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ANSWER_STYLE_METRICS.map(m => {
+                const v = m.calc(answers);
+                return (
+                  <tr key={m.name}>
+                    <td style={{fontWeight: 700, color: "var(--navy)", whiteSpace: "nowrap"}}>
+                      {m.name}
+                      <span style={{display: "block", fontSize: 11, fontWeight: 400, color: "var(--text-sub)"}}>{m.desc}</span>
+                    </td>
+                    <td className="score-cell">{m.format(v)}</td>
+                    <td>{m.judge(v)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </section>
+
+      {/* (c) タイプ解説 */}
+      <section className="result-sec">
+      <SectionTitle en="TYPE" ja={`${type}（${profile.label}）のビジネス傾向`} />
+      <div className="card">
+        <div className="profile-section">
+          <h3>💪 仕事上の強み</h3>
+          <ul>{profile.strengths.map(s => <li key={s}>{s}</li>)}</ul>
+        </div>
+        <div className="profile-section">
+          <h3>🌱 さらに伸ばせるポイント</h3>
+          <ul>{profile.growth.map(s => <li key={s}>{s}</li>)}</ul>
+        </div>
+        <div className="profile-section">
+          <h3>🤝 チーム内での役割傾向</h3>
+          <p style={{fontSize: "14.5px"}}>{profile.role}</p>
+        </div>
+      </div>
+      </section>
+
+      {/* (d) 免責事項 */}
+      <section className="result-sec">
+      <div className="card">
+        <div className="disclaimer">
+          <strong>ご確認ください（免責事項）</strong>
+          {DISCLAIMER_TEXT}
+        </div>
+      </div>
+      </section>
+
+      {/* (e) 印刷・再診断 */}
+      <div className="result-actions">
+        <button className="btn btn-ghost" onClick={() => window.print()}>
+          結果をPDF保存（A4・1枚）
+        </button>
+        <button className="btn btn-ghost"
+          onClick={() => { if (window.confirm("結果を破棄してトップに戻ります。よろしいですか？")) onRestart(); }}>
+          もう一度診断する
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* デモ用: URL末尾に #demo-result を付けると、サンプル回答済みの結果画面を直接開ける
+   （結果シートの確認・印刷テスト用。通常の利用には影響しない） */
+const DEMO_MODE = window.location.hash === "#demo-result";
+const DEMO_TYPE = "ENFJ";
+const DEMO_ANSWERS = buildQuestions(DEMO_TYPE).map((q, i) => [4, 4, 2, 5, 3, 4, 4, 3][i % 8]);
+
+/* --- ルート: 4画面をuseStateで切り替えるSPA --- */
+function App() {
+  const [screen, setScreen] = useState(DEMO_MODE ? "result" : "top");   // top | type | quiz | result
+  const [mbtiType, setMbtiType] = useState(DEMO_MODE ? DEMO_TYPE : null);
+  const [questions, setQuestions] = useState(DEMO_MODE ? buildQuestions(DEMO_TYPE) : []);
+  const [answers, setAnswers] = useState(DEMO_MODE ? DEMO_ANSWERS : []);
+  /* 応募者プロフィール（任意入力。結果画面と結果シートに反映される） */
+  const [applicant, setApplicant] = useState(
+    DEMO_MODE ? { name: "三条 太郎", school: "サンプル大学" } : { name: "", school: "" });
+  /* リロード等で中断した進捗（あればトップ画面に再開ボタンを出す） */
+  const [savedProgress, setSavedProgress] = useState(loadSavedProgress);
+
+  /* 画面切替時はページ先頭へ */
+  useEffect(() => { window.scrollTo({ top: 0, behavior: "smooth" }); }, [screen]);
+
+  /* 回答中は進捗を一時保存し、結果表示のタイミングで削除する */
+  useEffect(() => {
+    if (screen === "quiz" && mbtiType) saveProgress(mbtiType, answers, applicant);
+    else if (screen === "result") clearProgress();
+  }, [screen, mbtiType, answers, applicant]);
+
+  const startQuiz = (type) => {
+    const qs = buildQuestions(type);
+    setMbtiType(type);
+    setQuestions(qs);
+    setAnswers(Array(qs.length).fill(null));
+    setScreen("quiz");
+  };
+
+  /* 一時保存からの再開（質問数が変わっていても落ちないよう長さを合わせる） */
+  const resume = () => {
+    const qs = buildQuestions(savedProgress.type);
+    setMbtiType(savedProgress.type);
+    setQuestions(qs);
+    setAnswers(Array(qs.length).fill(null).map((_, i) =>
+      savedProgress.answers[i] != null ? savedProgress.answers[i] : null));
+    setApplicant(savedProgress.applicant || { name: "", school: "" });
+    setScreen("quiz");
+  };
+
+  const restart = () => {
+    clearProgress();
+    setSavedProgress(null);
+    setMbtiType(null);
+    setQuestions([]);
+    setAnswers([]);
+    setApplicant({ name: "", school: "" });
+    setScreen("top");
+  };
+
+  return (
+    <React.Fragment>
+      <Topbar screen={screen} />
+      <main>
+        {/* トップはフルブリード構成、それ以外は中央寄せのコンテナに載せる */}
+        {screen === "top" ? (
+          <TopScreen onStart={() => setScreen("type")}
+            savedProgress={savedProgress} onResume={resume} />
+        ) : (
+          <div className="container">
+            {screen === "type" && (
+              <TypeSelectScreen onDecide={startQuiz}
+                applicant={applicant} setApplicant={setApplicant} />
+            )}
+            {screen === "quiz" && (
+              <QuizScreen questions={questions} answers={answers}
+                setAnswers={setAnswers} onFinish={() => setScreen("result")} />
+            )}
+            {screen === "result" && (
+              <ResultScreen type={mbtiType} questions={questions}
+                answers={answers} applicant={applicant} onRestart={restart} />
+            )}
+          </div>
+        )}
+      </main>
+      <footer className="site-footer">
+        <strong>三条工務店</strong>
+        <span className="f-sub">BUSINESS APTITUDE TEST</span>
+        <p className="copyright">© 株式会社三条工務店 — 本診断の回答が外部に送信されることはありません</p>
+      </footer>
+    </React.Fragment>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
